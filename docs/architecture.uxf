@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<diagram program="umlet" version="14.3.0">
+  <zoom_level>10</zoom_level>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>190</x>
+      <y>230</y>
+      <w>310</w>
+      <h>130</h>
+    </coordinates>
+    <panel_attributes>portal-trigger
+--
+bg=white
+transparency=0
+layer=-1</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>550</x>
+      <y>230</y>
+      <w>310</w>
+      <h>210</h>
+    </coordinates>
+    <panel_attributes>portal-daemon
+--
+
+bg=white
+transparency=0
+layer=-1</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>380</x>
+      <y>280</y>
+      <w>100</w>
+      <h>60</h>
+    </coordinates>
+    <panel_attributes>Unix
+Socket
+halign=center
+valign=center</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>570</x>
+      <y>280</y>
+      <w>100</w>
+      <h>60</h>
+    </coordinates>
+    <panel_attributes>Unix
+Socket
+halign=center
+valign=center</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>470</x>
+      <y>290</y>
+      <w>120</w>
+      <h>40</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;-
+ipc</panel_attributes>
+    <additional_attributes>100.0;20.0;10.0;20.0</additional_attributes>
+  </element>
+  <element>
+    <id>UMLPackage</id>
+    <coordinates>
+      <x>140</x>
+      <y>150</y>
+      <w>770</w>
+      <h>480</h>
+    </coordinates>
+    <panel_attributes>Türöffner-PI
+--
+bg=orange
+layer=-2</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>190</x>
+      <y>490</y>
+      <w>140</w>
+      <h>100</h>
+    </coordinates>
+    <panel_attributes>sshd
+--
+bg=white
+transparency=0
+layer=-1</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>250</x>
+      <y>350</y>
+      <w>150</w>
+      <h>160</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;-
+invokes with
+authorized_keys</panel_attributes>
+    <additional_attributes>10.0;10.0;10.0;140.0</additional_attributes>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>210</x>
+      <y>280</y>
+      <w>100</w>
+      <h>60</h>
+    </coordinates>
+    <panel_attributes>CLI
+Arguments
+halign=center
+valign=center</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLPackage</id>
+    <coordinates>
+      <x>960</x>
+      <y>150</y>
+      <w>400</w>
+      <h>290</h>
+    </coordinates>
+    <panel_attributes>MQTT Broker
+--
+bg=orange
+layer=-2</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>1000</x>
+      <y>220</y>
+      <w>310</w>
+      <h>170</h>
+    </coordinates>
+    <panel_attributes>mosquitto mqtt daemon
+--
+
+bg=white
+transparency=0
+layer=-1</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>740</x>
+      <y>280</y>
+      <w>100</w>
+      <h>60</h>
+    </coordinates>
+    <panel_attributes>MQTT
+halign=center
+valign=center</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>830</x>
+      <y>300</y>
+      <w>190</w>
+      <h>30</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;-</panel_attributes>
+    <additional_attributes>170.0;10.0;10.0;10.0</additional_attributes>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>740</x>
+      <y>360</y>
+      <w>100</w>
+      <h>60</h>
+    </coordinates>
+    <panel_attributes>Periphery
+halign=center
+valign=center</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>140</x>
+      <y>630</y>
+      <w>770</w>
+      <h>30</h>
+    </coordinates>
+    <panel_attributes>GPIOS
+halign=center
+valign=center</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>780</x>
+      <y>410</y>
+      <w>30</w>
+      <h>240</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;-</panel_attributes>
+    <additional_attributes>10.0;220.0;10.0;10.0</additional_attributes>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>570</x>
+      <y>360</y>
+      <w>100</w>
+      <h>60</h>
+    </coordinates>
+    <panel_attributes>State
+Machine
+halign=center
+valign=center</panel_attributes>
+    <additional_attributes/>
+  </element>
+</diagram>
