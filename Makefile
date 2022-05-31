@@ -5,7 +5,7 @@ AR=ar
 
 CFLAGS=-static 
 CFLAGS_LIB=$(CFLAGS)
-CFLAGS_APP=$(CFLAGS) -Wall -Wextra -Werror=return-type -Werror=unused-parameter -I vendor/mqtt-c/include -I vendor/c-periphery/src
+CFLAGS_APP=$(CFLAGS) -Wall -Wextra -Werror=format -Werror=shadow -Werror=return-type -Werror=unused-parameter -I vendor/mqtt-c/include -I vendor/c-periphery/src
 LFLAGS=-static
 
 DAEMON_LIBS=
@@ -13,10 +13,10 @@ TRIGGER_LIBS=
 
 all: bin/portal-daemon bin/portal-trigger
 
-bin/portal-daemon: obj/portal-daemon.o obj/periphery.a obj/mqtt.a
+bin/portal-daemon: obj/portal-daemon.o obj/ipc.o obj/periphery.a obj/mqtt.a
 	$(LD) $(LFLAGS) $(addprefix -l ,$(DAEMON_LIBS)) -o "$@" $^
 
-bin/portal-trigger: obj/portal-trigger.o
+bin/portal-trigger: obj/portal-trigger.o obj/ipc.o
 	$(LD) $(LFLAGS) $(addprefix -l ,$(TRIGGER_LIBS)) -o "$@" $^
 
 # application object files

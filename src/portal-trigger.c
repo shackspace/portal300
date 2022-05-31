@@ -1,10 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 #include <getopt.h>
 #include <errno.h>
 #include <string.h>
 #include <stdbool.h>
+
+#include "ipc.h"
 
 static void print_usage(FILE * stream);
 static void panic(char const * msg);
@@ -26,6 +30,12 @@ struct PortalArgs {
 
 static bool parse_cli(int argc, char ** argv, struct PortalArgs * args);
 
+static int connecToDaemon();
+
+
+static int ipc_socket = -1;
+static void close_ipc_socket();
+
 int main(int argc, char ** argv)
 {
   struct PortalArgs cli;
@@ -37,28 +47,85 @@ int main(int argc, char ** argv)
     return EXIT_SUCCESS;
   }
 
+  ipc_socket = connecToDaemon();
+  if(ipc_socket == -1) {
+    return EXIT_FAILURE;
+  }
+  atexit(close_ipc_socket);
+
   // TODO: Open connection to local socket
 
-  printf("member_id   = %d\n", cli.member_id);
-  printf("member_nick = %s\n", cli.member_nick);
-  printf("member_name = %s\n", cli.member_name);
+  // printf("member_id   = %d\n", cli.member_id);
+  // printf("member_nick = %s\n", cli.member_nick);
+  // printf("member_name = %s\n", cli.member_name);
 
   switch(cli.action) {
     case PA_OPEN: {
-      printf("action = OPEN\n");
+      struct IpcMessage msg = {
+        .type = IPC_MSG_OPEN,
+        .data.open.member_id = cli.member_id,
+      };
+      strncpy(msg.data.open.member_name, cli.member_name, IPC_MAX_NAME_LEN);
+      strncpy(msg.data.open.member_nick, cli.member_nick, IPC_MAX_NICK_LEN);
+
+      if(!ipc_send_msg(ipc_socket, msg)) {
+        return EXIT_FAILURE;
+      }
       break;
     }
     case PA_CLOSE: {
-      printf("action = CLOSE\n");
+      bool const ok = ipc_send_msg(ipc_socket, (struct IpcMessage) {
+        .type = IPC_MSG_CLOSE,
+      });
+      if(!ok) {
+        return EXIT_FAILURE;
+      }
       break;
     }
     case PA_SHUTDOWN: {
-      printf("action = SHUTDOWN\n");
+      bool const ok = ipc_send_msg(ipc_socket, (struct IpcMessage) {
+        .type = IPC_MSG_SHUTDOWN,
+      });
+      if(!ok) {
+        return EXIT_FAILURE;
+      }
       break;
     }
     case PA_STATUS: {
-      printf("action = STATUS\n");
+      bool const ok = ipc_send_msg(ipc_socket, (struct IpcMessage) {
+        .type = IPC_MSG_QUERY_STATUS,
+      });
+      if(!ok) {
+        return EXIT_FAILURE;
+      }
       break;
+    }
+  }
+
+  while(true) {
+    struct IpcMessage msg;
+    enum IpcRcvResult msg_ok = ipc_receive_msg(ipc_socket, &msg);
+    if(msg_ok == IPC_EOF) {
+      break;
+    }
+    else if(msg_ok == IPC_ERROR) {
+      continue;
+    }
+    else if(msg_ok == IPC_SUCCESS) {
+      switch(msg.type) {
+        case IPC_MSG_INFO: {
+          size_t const len = strnlen(msg.data.info, sizeof msg.data.info);
+          fprintf(stdout, "%.*s\n", (int)len, msg.data.info);
+          break;
+        }
+
+        default:
+          fprintf(stderr, "received invalid ipc message of type %u\n", msg.type);
+          break;
+      }
+    }
+    else {
+      __builtin_unreachable();
     }
   }
 
@@ -86,6 +153,13 @@ static void print_usage(FILE * stream)
   ;
 
   fprintf(stream, usage_msg);
+}
+
+static void close_ipc_socket()
+{
+  if(close(ipc_socket) == -1) {
+    perror("failed to close ipc socket");
+  }
 }
 
 static void panic(char const * msg)
@@ -170,21 +244,53 @@ static bool parse_cli(int argc, char ** argv, struct PortalArgs * args)
     return false;
   }
 
+  bool params_ok = true;
+
   if(args->member_id == 0) {
     fprintf(stderr, "Option -i is missing!\n");
+    params_ok = false;
+  }
+  else if(args->member_id < 0) {
+    fprintf(stderr, "Option -i requires a positive member id!\n");
+    params_ok = false;
   }
 
   if(args->member_nick == NULL) {
     fprintf(stderr, "Option -n is missing!\n");
-
+    params_ok = false;
   }
+  else if(strlen(args->member_nick) > IPC_MAX_NICK_LEN) {
+    fprintf(stderr, "A member nick name has a limit of %u bytes, but %zu bytes were given!\n", IPC_MAX_NICK_LEN, strlen(args->member_nick));
+    params_ok = false;
+  }
+
   if(args->member_name == NULL) {
     fprintf(stderr, "Option -f is missing!\n");
   }
+  else if(strlen(args->member_name) > IPC_MAX_NAME_LEN) {
+    fprintf(stderr, "A member nick name has a limit of %u bytes, but %zu bytes were given!\n", IPC_MAX_NAME_LEN, strlen(args->member_name));
+    params_ok = false;
+  }
   
-  if((args->member_id == 0) || (args->member_nick == NULL) || (args->member_name == NULL)) {
+  if(params_ok == false) {
     return false;
   }
 
   return true;
+}
+
+static int connecToDaemon()
+{
+  int sock = ipc_create_socket();
+  if(sock == -1) {
+    return -1;
+  }
+
+  if(connect(sock, (struct sockaddr const *) &ipc_socket_address, sizeof ipc_socket_address) == -1) {
+    fprintf(stderr, "failed to connect to daemon: %s\n", strerror(errno));
+    close(sock);
+    return -1;
+  }
+
+  return sock;
 }
