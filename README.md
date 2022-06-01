@@ -45,6 +45,7 @@ Requirements:
 - GNU `make`
 - `gcc`
 - `ar`
+- `libssl-dev`
 
 ```sh-session
 [user@host portal300]$ make -B
