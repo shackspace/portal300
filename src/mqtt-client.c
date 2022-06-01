@@ -99,19 +99,6 @@ static void publish_callback(void** unused, struct mqtt_response_publish *publis
   fprintf(stderr, "publish callback was triggered!\n");
 }
 
-
-
-static void* client_refresher(void* client)
-{
-  while(1) 
-  {
-    // fprintf(stderr, "sync\n");
-    mqtt_sync((struct mqtt_client*) client);
-    usleep(100000U);
-  }
-  return NULL;
-}
-
 bool mqtt_client_connect(struct MqttClient *client)
 {
   (void)client;
@@ -141,7 +128,7 @@ bool mqtt_client_connect(struct MqttClient *client)
     goto _error_deinit_ctx;
   }
 
-  // automatically continue incomplete reads/writes during handshake
+  // enable proper non-blocking handling of our socket
   SSL_CTX_set_mode(ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
   
   // please verify the host certificate
@@ -149,8 +136,6 @@ bool mqtt_client_connect(struct MqttClient *client)
 
   // and please do only allow certificates directly signed by the CA
   SSL_CTX_set_verify_depth(ctx, 1);
-
-  // TODO: Load CA 
 
   SSL * const ssl = SSL_new(ctx);
   if(ssl == NULL) {
@@ -210,8 +195,6 @@ bool mqtt_client_connect(struct MqttClient *client)
     goto _error_deinit_ssl;
   }
 
-  fprintf(stderr, "initialized\n");
-
   err = mqtt_connect(&client->client, "portal client", NULL, NULL, 0, NULL, NULL, 0, 400);
   if (err != MQTT_OK) {
     fprintf(stderr, "failed to connect to mqtt server: %s\n", mqtt_error_str(err));
@@ -222,17 +205,6 @@ bool mqtt_client_connect(struct MqttClient *client)
   if (client->client.error != MQTT_OK) {
     fprintf(stderr, "failed to connect to mqtt server: %s\n", mqtt_error_str(client->client.error));
     goto _error_deinit_mqtt;
-  }
-
-  fprintf(stderr, "connected\n");
-
-  // TODO: solve this more elegantly via a exposed socket FD for poll
-
-  /* start a thread to refresh the client (handle egress and ingree client traffic) */
-  pthread_t client_daemon;
-  if(pthread_create(&client_daemon, NULL, client_refresher, &client->client)) {
-      // fprintf(stderr, "Failed to start client daemon.\n");
-      // exit_example(EXIT_FAILURE, sockfd, NULL);
   }
 
   client->ssl = (struct MqttClientSsl) {

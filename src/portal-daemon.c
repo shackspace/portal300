@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
   };
   pollfds[POLLFD_MQTT] = (struct pollfd) {
     .fd = mqtt_client_get_socket_fd(mqtt_client),
-    .events = POLLIN | POLLOUT,
+    .events = POLLIN,
     .revents = 0,
   };
 
@@ -165,6 +165,7 @@ int main(int argc, char **argv) {
 
           // Incoming MQTT message or connection closure
           case POLLFD_MQTT: {
+            printf("sync\n");
             mqtt_client_sync(mqtt_client);
             // assert(false); // TODO: Implement MQTT connection handling
             break;
