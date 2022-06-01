@@ -18,6 +18,7 @@
 #include <mqtt.h>
 
 #include "ipc.h"
+#include "mqtt-client.h"
 
 #define POLLFD_IPC        0 // well defined socket
 #define POLLFD_MQTT       1 // well defined socket
@@ -27,10 +28,11 @@
 static volatile sig_atomic_t shutdown_requested = 0;
 
 static int ipc_sock = -1;
-static int mqtt_sock = -1;
+
+static struct MqttClient * mqtt_client = NULL;
 
 static void close_ipc_sock();
-static void close_mqtt_sock();
+static void close_mqtt_client();
 
 static void sigint_handler(int sig, siginfo_t *info, void *ucontext);
 static void sigterm_handler(int sig, siginfo_t *info, void *ucontext);
@@ -44,6 +46,37 @@ static size_t add_ipc_client(int fd);
 static void remove_ipc_client(size_t index);
 
 int main(int argc, char **argv) {
+
+  if(!mqtt_client_init()) {
+    fprintf(stderr, "failed to initialize mqtt client library. aborting.\n");
+    return EXIT_FAILURE;
+  }
+
+  mqtt_client = mqtt_client_create("localhost", 8883);
+  if(mqtt_client == NULL) {
+    fprintf(stderr, "failed to create mqtt client.\n");
+    return EXIT_FAILURE;
+  }
+  atexit(close_mqtt_client);
+
+  printf("mqtt created\n");
+  
+  if(!mqtt_client_connect(mqtt_client)) {
+    fprintf(stderr, "failed to connect to mqtt server.\n");
+    return EXIT_FAILURE;
+  }
+
+  printf("mqtt connected\n");
+
+  printf("start publishing...\n");
+  if(!mqtt_client_publish(mqtt_client, "system/demo", "Hello, World!", 2)) {
+    fprintf(stderr, "failed to publish message to mqtt server.\n");
+    return EXIT_FAILURE;
+  }
+  
+  printf("mqtt published\n");
+  
+
   (void)argc;
   (void)argv;
 
@@ -90,8 +123,8 @@ int main(int argc, char **argv) {
     .revents = 0,
   };
   pollfds[POLLFD_MQTT] = (struct pollfd) {
-    .fd = mqtt_sock,
-    .events = POLLIN,
+    .fd = mqtt_client_get_socket_fd(mqtt_client),
+    .events = POLLIN | POLLOUT,
     .revents = 0,
   };
 
@@ -132,7 +165,8 @@ int main(int argc, char **argv) {
 
           // Incoming MQTT message or connection closure
           case POLLFD_MQTT: {
-            assert(false); // TODO: Implement MQTT connection handling
+            mqtt_client_sync(mqtt_client);
+            // assert(false); // TODO: Implement MQTT connection handling
             break;
           }
 
@@ -256,16 +290,16 @@ static void close_ipc_sock() {
   if(close(ipc_sock) == -1) {
     perror("failed to close ipc socket properly");
   }
+  ipc_sock = -1;
 
   if(unlink(ipc_socket_address.sun_path) == -1) {
     perror("failed to delete socket handle");
   }
 }
 
-static void close_mqtt_sock() {
-  if(close(mqtt_sock) == -1) {
-    perror("failed to close mqtt socket properly");
-  }
+static void close_mqtt_client() {
+  mqtt_client_destroy(mqtt_client);
+  mqtt_client = NULL;
 }
 
 

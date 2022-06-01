@@ -9,6 +9,7 @@ The following scripts are provided:
 - `gen-client-cert.sh`: Generates a new client certificate `portal.portal`
 - `mosquitto.sh`: Runs a local mosquitto instance with `server.key` and `ca.crt`
 - `mosquitto-test.sh`: Connects to the local mosquitto instance and tests the connection
+- `mosquitto-log.sh`: Connects to the local mosquitto instance and displays all published messages
 
 Run these scripts in the following order before starting to debug:
 
@@ -57,4 +58,17 @@ Client (null) received CONNACK (0)
 Client (null) sending PUBLISH (d0, q0, r0, m1, 'system/test', ... (21 bytes))
 Client (null) sending DISCONNECT
 [user@host debug]$
+```
+
+To log all sent messages, you can run the logger script:
+
+```sh-session
+[user@host debug]$ ./mosquitto-log.sh
+Client (null) sending CONNECT
+Client (null) received CONNACK (0)
+Client (null) sending SUBSCRIBE (Mid: 1, Topic: #, QoS: 0, Options: 0x00)
+Client (null) received SUBACK
+Subscribed (mid: 1): 0
+Client (null) received PUBLISH (d0, q0, r0, m0, 'system/test', ... (21 bytes))
+system/test This is a system test
 ```

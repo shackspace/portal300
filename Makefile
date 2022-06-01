@@ -3,21 +3,21 @@ CC=gcc
 LD=gcc
 AR=ar
 
-CFLAGS=-static 
+CFLAGS=-DMQTTC_PAL_FILE=portal_mqtt_pal.h -Isrc
 CFLAGS_LIB=$(CFLAGS)
-CFLAGS_APP=$(CFLAGS) -Wall -Wextra -Werror=format -Werror=shadow -Werror=return-type -Werror=unused-parameter -I vendor/mqtt-c/include -I vendor/c-periphery/src
-LFLAGS=-static
+CFLAGS_APP=$(CFLAGS) -pedantic -Wall -Wextra -Werror=format -Werror=shadow -Werror=return-type -Werror=unused-parameter -I vendor/mqtt-c/include -I vendor/c-periphery/src 
+LFLAGS=
 
-DAEMON_LIBS=
+DAEMON_LIBS=ssl crypto pthread
 TRIGGER_LIBS=
 
 all: bin/portal-daemon bin/portal-trigger
 
-bin/portal-daemon: obj/portal-daemon.o obj/ipc.o obj/periphery.a obj/mqtt.a
-	$(LD) $(LFLAGS) $(addprefix -l ,$(DAEMON_LIBS)) -o "$@" $^
+bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/periphery.a obj/mqtt.a
+	$(LD) $(LFLAGS) -o "$@" $^ $(addprefix -l ,$(DAEMON_LIBS))
 
 bin/portal-trigger: obj/portal-trigger.o obj/ipc.o
-	$(LD) $(LFLAGS) $(addprefix -l ,$(TRIGGER_LIBS)) -o "$@" $^
+	$(LD) $(LFLAGS) -o "$@" $^ $(addprefix -l ,$(TRIGGER_LIBS))
 
 # application object files
 obj/%.o: src/%.c
@@ -37,7 +37,7 @@ obj/mqtt.a: obj/mqtt-mqtt.o obj/mqtt-mqtt_pal.o
 
 # objects for mqtt-c
 obj/mqtt-%.o: vendor/mqtt-c/src/%.c
-	$(CC) $(CFLAGS_LIB) -c -I vendor/mqtt-c/include -DMQTT_USE_BIO -o "$@" $<
+	$(CC) $(CFLAGS_LIB) -c -I vendor/mqtt-c/include -o "$@" $<
 
 clean:
 	rm -f obj/*.o obj/*.a
