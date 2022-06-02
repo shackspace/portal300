@@ -47,7 +47,13 @@ int mqtt_client_get_socket_fd(struct MqttClient *client) {
   return client->socket;
 }
 
-struct MqttClient *mqtt_client_create(char const * host_name, int port)
+struct MqttClient *mqtt_client_create(
+  char const * host_name, 
+  int port,
+  char const * ca_cert,
+  char const * client_key,
+  char const * client_cert
+  )
 {
   assert(host_name != NULL);
   assert(port > 0 && port <= 65535);
@@ -62,36 +68,74 @@ struct MqttClient *mqtt_client_create(char const * host_name, int port)
   *client = (struct MqttClient) {
     .cfg_host_name = strdup(host_name),
     .cfg_port = port,
+    .ctx = NULL,
+
     .connected = false,
+    .socket = -1,
+    .ssl = NULL,
   };
 
   if(client->cfg_host_name == NULL) {
-    free(client);
-    return NULL;
+    goto _error_deinit_memory;
   }
 
+
+  client->ctx = SSL_CTX_new(TLS_client_method());
+  if(client->ctx == NULL) {
+    goto _error_deinit_hostname;
+  }
+
+  if(SSL_CTX_load_verify_locations(client->ctx, ca_cert, NULL) != 1) {
+    fprintf(stderr, "failed to load ca\n");
+    goto _error_deinit_ctx;
+  }
+  if(SSL_CTX_use_certificate_file(client->ctx, client_cert, SSL_FILETYPE_PEM) != 1) {
+    fprintf(stderr, "failed to load cert\n");
+    goto _error_deinit_ctx;
+  }
+  if(SSL_CTX_use_PrivateKey_file(client->ctx, client_key, SSL_FILETYPE_PEM) != 1) {
+    fprintf(stderr, "failed to load key\n");
+    goto _error_deinit_ctx;
+  }
+  if (SSL_CTX_check_private_key(client->ctx) != 1) {
+    fprintf(stderr, "key and cert do not match!\n");
+    goto _error_deinit_ctx;
+  }
+
+  // enable proper non-blocking handling of our socket
+  SSL_CTX_set_mode(client->ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
+  
+  // please verify the host certificate
+  SSL_CTX_set_verify(client->ctx, SSL_VERIFY_PEER, NULL);
+
+  // and please do only allow certificates directly signed by the CA
+  SSL_CTX_set_verify_depth(client->ctx, 1);
+
   return client;
+
+_error_deinit_ctx:
+  SSL_CTX_free(client->ctx);
+
+_error_deinit_hostname:
+  free(client->cfg_host_name);
+
+_error_deinit_memory:
+  free(client);
+
+  return NULL;
 }
 
 void mqtt_client_destroy(struct MqttClient *client)
 {
   assert(client != NULL);
   if(client->connected) {
-    if(client->ssl.ssl != NULL) {
-      SSL_free(client->ssl.ssl);
-    }
-    if(client->ssl.ctx != NULL) {
-      SSL_CTX_free(client->ssl.ctx);
-    }
-    if(close(client->socket) == -1) {
-      perror("failed to close MQTT socket handle");
-    }
+    mqtt_client_disconnect(client);
   }
+  SSL_CTX_free(client->ctx);
   free(client->cfg_host_name);
   free(client);
 }
-
-
+ 
 static void publish_callback(void** unused, struct mqtt_response_publish *published) 
 {
   (void)unused;
@@ -108,45 +152,11 @@ static void publish_callback(void** unused, struct mqtt_response_publish *publis
 
 bool mqtt_client_connect(struct MqttClient *client)
 {
-  (void)client;
+  assert(client != NULL);
 
-  SSL_CTX * const ctx = SSL_CTX_new(TLS_client_method());
-  if(ctx == NULL) {
-    return false;
-  }
-
-//#define PREFIX "/home/felix/projects/shackspace/portal300/code/"
-#define PREFIX ""
-
-  if(SSL_CTX_load_verify_locations(ctx, PREFIX "debug/ca.crt", NULL) != 1) {
-    fprintf(stderr, "failed to load ca\n");
-    goto _error_deinit_ctx;
-  }
-  if(SSL_CTX_use_certificate_file(ctx, PREFIX "debug/client.crt", SSL_FILETYPE_PEM) != 1) {
-    fprintf(stderr, "failed to load cert\n");
-    goto _error_deinit_ctx;
-  }
-  if(SSL_CTX_use_PrivateKey_file(ctx, PREFIX "debug/client.key", SSL_FILETYPE_PEM) != 1) {
-    fprintf(stderr, "failed to load key\n");
-    goto _error_deinit_ctx;
-  }
-  if (SSL_CTX_check_private_key(ctx) != 1) {
-    fprintf(stderr, "key and cert do not match!\n");
-    goto _error_deinit_ctx;
-  }
-
-  // enable proper non-blocking handling of our socket
-  SSL_CTX_set_mode(ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
-  
-  // please verify the host certificate
-  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-
-  // and please do only allow certificates directly signed by the CA
-  SSL_CTX_set_verify_depth(ctx, 1);
-
-  SSL * const ssl = SSL_new(ctx);
+  SSL * const ssl = SSL_new(client->ctx);
   if(ssl == NULL) {
-    goto _error_deinit_ctx;
+    return false;
   }
 
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -214,10 +224,7 @@ bool mqtt_client_connect(struct MqttClient *client)
     goto _error_deinit_mqtt;
   }
 
-  client->ssl = (struct MqttClientSsl) {
-    .ssl = ssl,
-    .ctx = ctx,
-  };
+  client->ssl = ssl;
   client->socket = sockfd;
   client->connected = true;
 
@@ -234,19 +241,53 @@ _error_deinit_socket:
 _error_deinit_ssl:
   SSL_free(ssl);
 
-_error_deinit_ctx:
-  SSL_CTX_free(ctx);
-
   return false;
+}
+
+void mqtt_client_disconnect(struct MqttClient *client)
+{
+  assert(client != NULL);
+  if(!client->connected) {
+    return;
+  }
+
+  if(client->ssl != NULL) {
+    SSL_free(client->ssl);
+  }
+  if(close(client->socket) == -1) {
+    perror("failed to close MQTT socket handle");
+  }
+
+  client->ssl = NULL;
+  client->socket = -1;
+  client->connected = false;
+}
+
+bool mqtt_client_is_connected(struct MqttClient *client)
+{
+  assert(client != NULL);
+  return client->connected;
 }
 
 bool mqtt_client_sync(struct MqttClient *client)
 {
   assert(client != NULL);
 
-  mqtt_sync(&client->client);
+  enum MQTTErrors err = mqtt_sync(&client->client);
 
-  return true;
+    switch(err) {
+      case MQTT_OK: return true;
+
+      case MQTT_ERROR_CONNECTION_CLOSED:
+        mqtt_client_disconnect(client);
+        return false;
+
+      default:
+        fprintf(stderr, "mqtt_sync() failed: %s\n", mqtt_error_str(err));
+        break;
+  }
+
+  return false;
 }
 
 bool mqtt_client_subscribe(struct MqttClient *client, char const * topic)
@@ -340,6 +381,8 @@ ssize_t mqtt_pal_sendall(mqtt_pal_socket_handle fd, const void *buf, size_t buff
       switch (error_code) {
         case SSL_ERROR_WANT_READ:
           return offset;
+        case SSL_ERROR_ZERO_RETURN: // end of stream
+          return MQTT_ERROR_CONNECTION_CLOSED;
         default: 
           fprintf(stderr, "SSL_write() failed: %d\n", error_code);
           return MQTT_ERROR_SOCKET_ERROR;
@@ -383,6 +426,8 @@ ssize_t mqtt_pal_recvall(mqtt_pal_socket_handle fd, void *buffer_erased, size_t 
       switch (error_code) {
         case SSL_ERROR_WANT_READ:
           return offset;
+        case SSL_ERROR_ZERO_RETURN: // end of stream
+          return MQTT_ERROR_CONNECTION_CLOSED;
         default: 
           fprintf(stderr, "SSL_read() failed: %d\n", error_code);
           return MQTT_ERROR_SOCKET_ERROR;

@@ -6,20 +6,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct MqttClientSsl {
-  struct ssl_st *ssl;
-  struct ssl_ctx_st *ctx;
-};
-
 struct MqttClient {
   // stored configuration
   char *cfg_host_name;
   int cfg_port;
+  struct ssl_ctx_st *ctx;
 
   // runtime status
   bool connected;
   int socket;
-  struct MqttClientSsl ssl;
+  struct ssl_st *ssl;
   struct mqtt_client client;
   uint8_t sendbuf[2048];
   uint8_t recvbuf[1024];
@@ -30,12 +26,24 @@ bool mqtt_client_init();
 
 //! Creates a new MQTT client that can be used to connect to the portal MQT
 //! broker. Does not automatically connect!
-struct MqttClient *mqtt_client_create(char const *host_name, int port);
+//!
+//! - `host_name` is the host name or ip address of the mqtt server.
+//! - `port` is the port number of the mqtt server. usually `1883` or `8883`.
+//! - `ca_cert` is the path to the CA certificate of the servers certificate.
+//! - `client_key` is the path to the private key of the client certificate.
+//! - `client_cert` is the path to the client certificate.
+struct MqttClient *mqtt_client_create(char const *host_name, int port,
+                                      char const *ca_cert,
+                                      char const *client_key,
+                                      char const *client_cert);
 
 //! Destroys a previously allocated MQTT client.
 void mqtt_client_destroy(struct MqttClient *client);
 
 bool mqtt_client_connect(struct MqttClient *client);
+void mqtt_client_disconnect(struct MqttClient *client);
+
+bool mqtt_client_is_connected(struct MqttClient *client);
 
 bool mqtt_client_sync(struct MqttClient *client);
 

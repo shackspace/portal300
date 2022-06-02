@@ -1,4 +1,8 @@
-#include <asm-generic/socket.h>
+
+#include "ipc.h"
+#include "mqtt-client.h"
+
+#include <bits/types/struct_itimerspec.h>
 #include <getopt.h>
 #include <poll.h>
 #include <stdio.h>
@@ -7,6 +11,7 @@
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 #include <stdbool.h>
 #include <signal.h>
@@ -17,8 +22,6 @@
 #include <gpio.h>
 #include <mqtt.h>
 
-#include "ipc.h"
-#include "mqtt-client.h"
 
 #define POLLFD_IPC        0 // well defined socket
 #define POLLFD_MQTT       1 // well defined socket
@@ -52,39 +55,34 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  mqtt_client = mqtt_client_create("localhost", 8883);
+  mqtt_client = mqtt_client_create(
+    "localhost", 8883,
+    "debug/ca.crt",
+    "debug/client.key",
+    "debug/client.crt");
   if(mqtt_client == NULL) {
     fprintf(stderr, "failed to create mqtt client.\n");
     return EXIT_FAILURE;
   }
   atexit(close_mqtt_client);
-
-  printf("mqtt created\n");
   
   if(!mqtt_client_connect(mqtt_client)) {
     fprintf(stderr, "failed to connect to mqtt server.\n");
     return EXIT_FAILURE;
   }
 
-  printf("mqtt connected\n");
-
-  printf("start publishing...\n");
   if(!mqtt_client_publish(mqtt_client, "system/demo", "Hello, World!", 2)) {
     fprintf(stderr, "failed to publish message to mqtt server.\n");
     return EXIT_FAILURE;
   }
   
-  printf("mqtt published\n");
-
-  printf("start subscribing...\n");
+  
   if(!mqtt_client_subscribe(mqtt_client, "#")) {
     fprintf(stderr, "failed to subscribe to topic '#' on mqtt server.\n");
     return EXIT_FAILURE;
   }
   
-  printf("mqtt subscribing\n");
   
-
   (void)argc;
   (void)argv;
 
@@ -173,9 +171,76 @@ int main(int argc, char **argv) {
 
           // Incoming MQTT message or connection closure
           case POLLFD_MQTT: {
-            printf("sync\n");
-            mqtt_client_sync(mqtt_client);
-            // assert(false); // TODO: Implement MQTT connection handling
+            static const struct itimerspec restart_timeout = {
+              .it_value = {
+                .tv_sec = 5,
+                .tv_nsec = 0,
+              },
+              .it_interval = {
+                .tv_sec = 5,
+                .tv_nsec = 0,
+              },
+            };
+
+            if(mqtt_client_is_connected(mqtt_client)) {
+              // we're connected, so the fd is the mqtt socket.
+              // process messages and handle errors here.
+
+              if(!mqtt_client_sync(mqtt_client)) {
+
+                if(mqtt_client_is_connected(mqtt_client)) {
+                  // TODO: Handle mqtt errors
+                  fprintf(stderr, "Handle MQTT error here gracefully\n");
+                }
+                else {
+                  fprintf(stderr, "Lost connection to MQTT, reconnecting in %ld seconds...\n", restart_timeout.it_value.tv_sec);
+                  pollfds[i].fd = -1;
+
+                  int timer = timerfd_create(CLOCK_MONOTONIC, 0);
+                  if(timer == -1) {
+                    perror("failed to create timerfd");
+                    fprintf(stderr, "destroying daemon, hoping for restart...\n");
+                    exit(EXIT_FAILURE);
+                  }
+
+                  if(timerfd_settime(timer, 0, &restart_timeout, NULL) == -1) {
+                    perror("failed to arm timerfd");
+                    fprintf(stderr, "destroying daemon, hoping for restart...\n");
+                    exit(EXIT_FAILURE);
+                  }
+
+                  pollfds[i].fd = timer;
+                }
+              }
+            }
+            else {
+              uint64_t counter;
+              int res = read(pfd.fd, &counter, sizeof counter);
+              if(res == -1) {
+                perror("failed to read from timerfd");
+                fprintf(stderr, "destroying daemon, hoping for restart...\n");
+                exit(EXIT_FAILURE);
+              }
+
+              if(mqtt_client_connect(mqtt_client)) {
+                fprintf(stderr, "successfully reconnected to mqtt server.\n");
+
+                if(close(pfd.fd) == -1) {
+                  perror("failed to destroy timerfd");
+                }
+
+                pollfds[i].fd = mqtt_client_get_socket_fd(mqtt_client);
+
+                if(!mqtt_client_subscribe(mqtt_client, "#")) {
+                  fprintf(stderr, "failed to subscribe to topic '#' on mqtt server.\n");
+                  fprintf(stderr, "destroying daemon, hoping for restart...\n");
+                  exit(EXIT_FAILURE);
+                }
+              }
+              else {
+                  fprintf(stderr, "failed to connect to mqtt server, retrying in %ld seconds\n", restart_timeout.it_value.tv_sec);
+              }
+            }
             break;
           }
 
