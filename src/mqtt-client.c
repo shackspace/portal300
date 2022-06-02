@@ -97,6 +97,13 @@ static void publish_callback(void** unused, struct mqtt_response_publish *publis
   (void)unused;
   (void)published;
   fprintf(stderr, "publish callback was triggered!\n");
+  fprintf(stderr, "published data:\n"
+                  "  topic: %.*s\n"
+                  "  data:  %.*s\n",
+                  (int)published->topic_name_size,
+                  (char const *)published->topic_name,
+                  (int)published->application_message_size,
+                  (char const *)published->application_message);
 }
 
 bool mqtt_client_connect(struct MqttClient *client)
@@ -242,6 +249,27 @@ bool mqtt_client_sync(struct MqttClient *client)
   return true;
 }
 
+bool mqtt_client_subscribe(struct MqttClient *client, char const * topic)
+{
+  assert(client != NULL);
+  assert(topic != NULL);
+  assert(client->connected);
+
+  enum MQTTErrors err = mqtt_subscribe(&client->client, topic, 2);
+  
+  if(err != MQTT_OK) {
+    fprintf(stderr, "failed to subscribe to mqtt topic: %s\n", mqtt_error_str(err));
+    return false;
+  }
+
+    /* check for errors */
+  if (client->client.error != MQTT_OK) {
+    fprintf(stderr, "failed to subscribe to mqtt topic: %s\n", mqtt_error_str(client->client.error));
+    return false;
+  }
+
+  return true;
+}
 
 bool mqtt_client_publish(struct MqttClient *client, char const * topic, char const * message, int qos)
 {

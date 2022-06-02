@@ -39,6 +39,8 @@ bool mqtt_client_connect(struct MqttClient *client);
 
 bool mqtt_client_sync(struct MqttClient *client);
 
+bool mqtt_client_subscribe(struct MqttClient *client, char const *topic);
+
 bool mqtt_client_publish(struct MqttClient *client, char const *topic,
                          char const *message, int qos);
 

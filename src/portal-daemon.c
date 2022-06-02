@@ -75,6 +75,14 @@ int main(int argc, char **argv) {
   }
   
   printf("mqtt published\n");
+
+  printf("start subscribing...\n");
+  if(!mqtt_client_subscribe(mqtt_client, "#")) {
+    fprintf(stderr, "failed to subscribe to topic '#' on mqtt server.\n");
+    return EXIT_FAILURE;
+  }
+  
+  printf("mqtt subscribing\n");
   
 
   (void)argc;
