@@ -7,7 +7,9 @@
 #include <poll.h>
 #include <stdio.h>
 
+#include <stdarg.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -22,11 +24,8 @@
 #include <gpio.h>
 #include <mqtt.h>
 
+#define MQTT_RECONNECT_TIMEOUT 5 // seconds
 
-#define POLLFD_IPC        0 // well defined socket
-#define POLLFD_MQTT       1 // well defined socket
-#define POLLFD_FIRST_IPC  2 // first ipc socket
-#define POLLFD_LIMIT     32 // number of maximum socket connections
 
 static volatile sig_atomic_t shutdown_requested = 0;
 
@@ -34,105 +33,127 @@ static int ipc_sock = -1;
 
 static struct MqttClient * mqtt_client = NULL;
 
-static void close_ipc_sock();
-static void close_mqtt_client();
-
-static void sigint_handler(int sig, siginfo_t *info, void *ucontext);
-static void sigterm_handler(int sig, siginfo_t *info, void *ucontext);
+#define POLLFD_IPC        0 // well defined fd, always the unix socket for IPC 
+#define POLLFD_MQTT       1 // well defined fd, either the timerfd for reconnecting MQTT or the socket for MQTT communications
+#define POLLFD_FIRST_IPC  2 // First ipc client socket slot
+#define POLLFD_LIMIT     32 // number of maximum socket connections
 
 static struct pollfd pollfds[POLLFD_LIMIT];
 static size_t pollfds_size = 2;
 
 static const size_t INVALID_IPC_CLIENT = ~0U;
 
+struct CliOptions {
+  char const * host_name;
+  int port;
+  char const * ca_cert_file;
+  char const * client_key_file;
+  char const * client_crt_file;
+};
+
+static void close_ipc_sock();
+static void close_mqtt_client();
+
+static void sigint_handler(int sig, siginfo_t *info, void *ucontext);
+static void sigterm_handler(int sig, siginfo_t *info, void *ucontext);
+
 static size_t add_ipc_client(int fd);
 static void remove_ipc_client(size_t index);
 
+static bool try_connect_mqtt();
+static bool install_signal_handlers();
+static int create_timeout_timer(int secs);
+
+static bool send_ipc_info(int fd, char const * text);
+static bool send_ipc_infof(int fd, char const * fmt, ...) __attribute__ ((format (printf, 2, 3)));
+
 int main(int argc, char **argv) {
+
+  // Initialize libraries and dependencies:
+
+  if(!install_signal_handlers()) {
+    fprintf(stderr, "failed to install signal handlers.\n");
+    exit(EXIT_FAILURE);
+  }
 
   if(!mqtt_client_init()) {
     fprintf(stderr, "failed to initialize mqtt client library. aborting.\n");
     return EXIT_FAILURE;
   }
 
+  struct CliOptions const cli = {
+    .host_name = "localhost",
+    .port = 8883,
+    .ca_cert_file = "debug/ca.crt",
+    .client_key_file = "debug/client.key",
+    .client_crt_file = "debug/client.crt",
+  };
+
+  // Create MQTT client from CLI info
+
   mqtt_client = mqtt_client_create(
-    "localhost", 8883,
-    "debug/ca.crt",
-    "debug/client.key",
-    "debug/client.crt");
+    cli.host_name,
+    cli.port,
+    cli.ca_cert_file,
+    cli.client_key_file,
+    cli.client_crt_file
+  );
   if(mqtt_client == NULL) {
     fprintf(stderr, "failed to create mqtt client.\n");
     return EXIT_FAILURE;
   }
   atexit(close_mqtt_client);
   
-  if(!mqtt_client_connect(mqtt_client)) {
-    fprintf(stderr, "failed to connect to mqtt server.\n");
-    return EXIT_FAILURE;
-  }
-
-  if(!mqtt_client_publish(mqtt_client, "system/demo", "Hello, World!", 2)) {
-    fprintf(stderr, "failed to publish message to mqtt server.\n");
-    return EXIT_FAILURE;
-  }
-  
-  
-  if(!mqtt_client_subscribe(mqtt_client, "#")) {
-    fprintf(stderr, "failed to subscribe to topic '#' on mqtt server.\n");
-    return EXIT_FAILURE;
-  }
-  
-  
   (void)argc;
   (void)argv;
-
-  struct sigaction const sigint_action = {
-    .sa_sigaction = sigint_handler,
-    .sa_flags = SA_SIGINFO,
-  };
-
-  if(sigaction(SIGINT, &sigint_action, NULL) == -1) {
-    perror("failed to set SIGINT handler");
-    return EXIT_FAILURE;
-  }
-
-  struct sigaction const sigterm_action = {
-    .sa_sigaction = sigterm_handler,
-    .sa_flags = SA_SIGINFO,
-    .sa_restorer = NULL,
-  };
-
-  if(sigaction(SIGTERM, &sigterm_action, NULL) == -1) {
-    perror("failed to set SIGTERM handler");
-    return EXIT_FAILURE;
-  }
 
   ipc_sock = ipc_create_socket();
   if (ipc_sock == -1) {
     return EXIT_FAILURE;
   }
 
-  if(bind(ipc_sock, (struct sockaddr const *) &ipc_socket_address, sizeof ipc_socket_address) == -1) {
-    perror("failed to bind ipc socket");
-    fprintf(stderr, "is another instance of this daemon already running?\n");
-    return EXIT_FAILURE;
+  if(try_connect_mqtt())
+  {
+    // we successfully connected to MQTT, set up the poll entry for MQTT action:
+    pollfds[POLLFD_MQTT] = (struct pollfd) {
+      .fd = mqtt_client_get_socket_fd(mqtt_client),
+      .events = POLLIN,
+      .revents = 0,
+    };
   }
-  atexit(close_ipc_sock);
+  else
+  {
+    fprintf(stderr, "failed to connect to mqtt server, retrying in %d seconds\n", MQTT_RECONNECT_TIMEOUT);
 
-  if(listen(ipc_sock, 0) == -1) {
-    perror("failed to listen on ipc socket");
-    return EXIT_FAILURE;
+    // we failed to connect to MQTT, set up a timerfd to retry in some seconds
+    int timer = create_timeout_timer(MQTT_RECONNECT_TIMEOUT);
+ 
+    pollfds[POLLFD_MQTT] = (struct pollfd) {
+      .fd = timer,
+      .events = POLLIN,
+      .revents = 0,
+    };
   }
-  pollfds[POLLFD_IPC] = (struct pollfd) {
-    .fd = ipc_sock,
-    .events = POLLIN,
-    .revents = 0,
-  };
-  pollfds[POLLFD_MQTT] = (struct pollfd) {
-    .fd = mqtt_client_get_socket_fd(mqtt_client),
-    .events = POLLIN,
-    .revents = 0,
-  };
+
+  // Bind and setup the ipc socket, so we can receive ipc messages 
+  {
+    if(bind(ipc_sock, (struct sockaddr const *) &ipc_socket_address, sizeof ipc_socket_address) == -1) {
+      perror("failed to bind ipc socket");
+      fprintf(stderr, "is another instance of this daemon already running?\n");
+      return EXIT_FAILURE;
+    }
+    atexit(close_ipc_sock);
+
+    if(listen(ipc_sock, 0) == -1) {
+      perror("failed to listen on ipc socket");
+      return EXIT_FAILURE;
+    }
+    pollfds[POLLFD_IPC] = (struct pollfd) {
+      .fd = ipc_sock,
+      .events = POLLIN,
+      .revents = 0,
+    };
+  }
 
   while(shutdown_requested == false) {
     int const poll_ret = poll(pollfds, pollfds_size, -1); // wait infinitly for an event
@@ -171,45 +192,18 @@ int main(int argc, char **argv) {
 
           // Incoming MQTT message or connection closure
           case POLLFD_MQTT: {
-            static const struct itimerspec restart_timeout = {
-              .it_value = {
-                .tv_sec = 5,
-                .tv_nsec = 0,
-              },
-              .it_interval = {
-                .tv_sec = 5,
-                .tv_nsec = 0,
-              },
-            };
-
             if(mqtt_client_is_connected(mqtt_client)) {
               // we're connected, so the fd is the mqtt socket.
               // process messages and handle errors here.
 
               if(!mqtt_client_sync(mqtt_client)) {
-
                 if(mqtt_client_is_connected(mqtt_client)) {
                   // TODO: Handle mqtt errors
                   fprintf(stderr, "Handle MQTT error here gracefully\n");
                 }
                 else {
-                  fprintf(stderr, "Lost connection to MQTT, reconnecting in %ld seconds...\n", restart_timeout.it_value.tv_sec);
-                  pollfds[i].fd = -1;
-
-                  int timer = timerfd_create(CLOCK_MONOTONIC, 0);
-                  if(timer == -1) {
-                    perror("failed to create timerfd");
-                    fprintf(stderr, "destroying daemon, hoping for restart...\n");
-                    exit(EXIT_FAILURE);
-                  }
-
-                  if(timerfd_settime(timer, 0, &restart_timeout, NULL) == -1) {
-                    perror("failed to arm timerfd");
-                    fprintf(stderr, "destroying daemon, hoping for restart...\n");
-                    exit(EXIT_FAILURE);
-                  }
-
-                  pollfds[i].fd = timer;
+                  fprintf(stderr, "Lost connection to MQTT, reconnecting in %d seconds...\n", MQTT_RECONNECT_TIMEOUT);
+                  pollfds[i].fd = create_timeout_timer(MQTT_RECONNECT_TIMEOUT);
                 }
               }
             }
@@ -222,7 +216,7 @@ int main(int argc, char **argv) {
                 exit(EXIT_FAILURE);
               }
 
-              if(mqtt_client_connect(mqtt_client)) {
+              if(try_connect_mqtt(mqtt_client)) {
                 fprintf(stderr, "successfully reconnected to mqtt server.\n");
 
                 if(close(pfd.fd) == -1) {
@@ -230,15 +224,9 @@ int main(int argc, char **argv) {
                 }
 
                 pollfds[i].fd = mqtt_client_get_socket_fd(mqtt_client);
-
-                if(!mqtt_client_subscribe(mqtt_client, "#")) {
-                  fprintf(stderr, "failed to subscribe to topic '#' on mqtt server.\n");
-                  fprintf(stderr, "destroying daemon, hoping for restart...\n");
-                  exit(EXIT_FAILURE);
-                }
               }
               else {
-                  fprintf(stderr, "failed to connect to mqtt server, retrying in %ld seconds\n", restart_timeout.it_value.tv_sec);
+                  fprintf(stderr, "failed to connect to mqtt server, retrying in %d seconds\n", MQTT_RECONNECT_TIMEOUT);
               }
             }
             break;
@@ -292,10 +280,14 @@ int main(int argc, char **argv) {
                     case IPC_MSG_QUERY_STATUS: {
                       fprintf(stderr, "client %zu requested portal status.\n", i);
 
-                      (void)ipc_send_msg(pfd.fd, (struct IpcMessage) {
-                        .type = IPC_MSG_INFO,
-                        .data.info = "Das Portal ist noch nicht vollständig implementiert. Auf Wiedersehen!",
-                      });
+                      (void)send_ipc_infof(pfd.fd, "Portal-Status:");
+                      (void)send_ipc_infof(pfd.fd, "  Aktivität:     %s", "???"); // idle, öffnen, schließen
+                      (void)send_ipc_infof(pfd.fd, "  MQTT:          %s",  mqtt_client_is_connected(mqtt_client) ? "Verbunden" : "Nicht verbunden");
+                      (void)send_ipc_infof(pfd.fd, "  IPC Clients:   %lu", pollfds_size - POLLFD_FIRST_IPC);
+                      (void)send_ipc_infof(pfd.fd, "  Schließbolzen: %s", "???"); // geöffnet, geschlossen
+                      (void)send_ipc_infof(pfd.fd, "  Türsensor:     %s", "???"); // geöffnet, geschlossen
+                      (void)send_ipc_info(pfd.fd, "");
+                      (void)send_ipc_infof(pfd.fd, "Das Portal ist noch nicht vollständig implementiert. Auf Wiedersehen!");
 
                       // after a status message, we can just drop the client connection
                       remove_ipc_client(i);
@@ -323,6 +315,105 @@ int main(int argc, char **argv) {
   return EXIT_SUCCESS;
 }
 
+static bool send_ipc_info(int fd, char const * text)
+{
+  struct IpcMessage msg = {
+    .type = IPC_MSG_INFO,
+    .data.info = "",
+  };
+
+  strncpy(msg.data.info, text, sizeof msg.data.info);
+
+  return ipc_send_msg(fd, msg);
+}
+
+static bool send_ipc_infof(int fd, char const * fmt, ...) 
+{
+  struct IpcMessage msg = {
+    .type = IPC_MSG_INFO,
+    .data.info = "",
+  };
+
+  va_list list;
+  va_start(list, fmt);
+  vsnprintf(msg.data.info, sizeof msg.data.info, fmt, list);
+  va_end(list);
+
+  return ipc_send_msg(fd, msg);
+}
+
+static bool try_connect_mqtt()
+{
+  assert(mqtt_client != NULL);
+
+  if(!mqtt_client_connect(mqtt_client)) {
+    return false;
+  }
+
+  if(!mqtt_client_publish(mqtt_client, "system/demo", "Hello, World!", 2)) {
+    fprintf(stderr, "failed to publish message to mqtt server.\n");
+    return false;
+  }
+  
+  if(!mqtt_client_subscribe(mqtt_client, "#")) {
+    fprintf(stderr, "failed to subscribe to topic '#' on mqtt server.\n");
+    return false;
+  }
+
+  return true;
+}
+
+static bool install_signal_handlers()
+{
+  static struct sigaction const sigint_action = {
+    .sa_sigaction = sigint_handler,
+    .sa_flags = SA_SIGINFO,
+  };
+  if(sigaction(SIGINT, &sigint_action, NULL) == -1) {
+    perror("failed to set SIGINT handler");
+    return false;
+  }
+
+  static struct sigaction const sigterm_action = {
+    .sa_sigaction = sigterm_handler,
+    .sa_flags = SA_SIGINFO,
+  };
+  if(sigaction(SIGTERM, &sigterm_action, NULL) == -1) {
+    perror("failed to set SIGTERM handler");
+    return false;
+  }
+
+  return true;
+}
+
+static int create_timeout_timer(int secs)
+{
+  const struct itimerspec restart_timeout = {
+    .it_value = {
+      .tv_sec = secs,
+      .tv_nsec = 0,
+    },
+    .it_interval = {
+      .tv_sec = secs,
+      .tv_nsec = 0,
+    },
+  };
+
+  int timer = timerfd_create(CLOCK_MONOTONIC, 0);
+  if(timer == -1) {
+    perror("failed to create timerfd");
+    fprintf(stderr, "destroying daemon, hoping for restart...\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if(timerfd_settime(timer, 0, &restart_timeout, NULL) == -1) {
+    perror("failed to arm timerfd");
+    fprintf(stderr, "destroying daemon, hoping for restart...\n");
+    exit(EXIT_FAILURE);
+  }
+
+  return timer;
+}
 
 static size_t add_ipc_client(int fd) {
   if(pollfds_size >= POLLFD_LIMIT) {

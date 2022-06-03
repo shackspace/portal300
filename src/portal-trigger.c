@@ -246,30 +246,34 @@ static bool parse_cli(int argc, char ** argv, struct PortalArgs * args)
 
   bool params_ok = true;
 
-  if(args->member_id == 0) {
-    fprintf(stderr, "Option -i is missing!\n");
-    params_ok = false;
-  }
-  else if(args->member_id < 0) {
-    fprintf(stderr, "Option -i requires a positive member id!\n");
-    params_ok = false;
-  }
+  bool requires_user_info = (args->action == PA_OPEN);
 
-  if(args->member_nick == NULL) {
-    fprintf(stderr, "Option -n is missing!\n");
-    params_ok = false;
-  }
-  else if(strlen(args->member_nick) > IPC_MAX_NICK_LEN) {
-    fprintf(stderr, "A member nick name has a limit of %u bytes, but %zu bytes were given!\n", IPC_MAX_NICK_LEN, strlen(args->member_nick));
-    params_ok = false;
-  }
+  if(requires_user_info) {
+    if(args->member_id == 0) {
+      fprintf(stderr, "Option -i is missing!\n");
+      params_ok = false;
+    }
+    else if(args->member_id < 0) {
+      fprintf(stderr, "Option -i requires a positive member id!\n");
+      params_ok = false;
+    }
 
-  if(args->member_name == NULL) {
-    fprintf(stderr, "Option -f is missing!\n");
-  }
-  else if(strlen(args->member_name) > IPC_MAX_NAME_LEN) {
-    fprintf(stderr, "A member nick name has a limit of %u bytes, but %zu bytes were given!\n", IPC_MAX_NAME_LEN, strlen(args->member_name));
-    params_ok = false;
+    if(args->member_nick == NULL) {
+      fprintf(stderr, "Option -n is missing!\n");
+      params_ok = false;
+    }
+    else if(strlen(args->member_nick) > IPC_MAX_NICK_LEN) {
+      fprintf(stderr, "A member nick name has a limit of %u bytes, but %zu bytes were given!\n", IPC_MAX_NICK_LEN, strlen(args->member_nick));
+      params_ok = false;
+    }
+
+    if(args->member_name == NULL) {
+      fprintf(stderr, "Option -f is missing!\n");
+    }
+    else if(strlen(args->member_name) > IPC_MAX_NAME_LEN) {
+      fprintf(stderr, "A member nick name has a limit of %u bytes, but %zu bytes were given!\n", IPC_MAX_NAME_LEN, strlen(args->member_name));
+      params_ok = false;
+    }
   }
   
   if(params_ok == false) {

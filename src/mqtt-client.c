@@ -272,6 +272,9 @@ bool mqtt_client_is_connected(struct MqttClient *client)
 bool mqtt_client_sync(struct MqttClient *client)
 {
   assert(client != NULL);
+  if(client->connected == false) {
+    return false;
+  }
 
   enum MQTTErrors err = mqtt_sync(&client->client);
 
