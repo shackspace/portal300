@@ -11,6 +11,8 @@
 #include <openssl/x509_vfy.h>
 
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 
 
@@ -150,6 +152,51 @@ static void publish_callback(void** unused, struct mqtt_response_publish *publis
                   (char const *)published->application_message);
 }
 
+static int connect_socket_to(char const * host_name, int port)
+{
+  assert(host_name != NULL);
+  assert(port >= 0 && port <= 65535);
+  
+  struct addrinfo hints = {
+  .ai_family = AF_UNSPEC, // IPv4 or IPv6
+  .ai_socktype = SOCK_STREAM,
+  .ai_flags = 0,
+  .ai_protocol = 0, // allow any protocol
+  };
+
+  char port_name[64];
+  snprintf(port_name, sizeof port_name, "%d", port);
+
+
+  struct addrinfo *result;
+  int error = getaddrinfo(host_name, port_name, &hints, &result);
+  if (error != 0) {
+    fprintf(stderr, "failed to query address info: %s\n", gai_strerror(error));
+    return -1;
+  }
+
+  int sock = -1;
+  for (struct addrinfo * iter = result; iter != NULL; iter = iter->ai_next) {
+    int sockfd = socket(iter->ai_family, iter->ai_socktype, iter->ai_protocol);
+    if (sockfd == -1) {
+      continue;
+    }
+
+    if (connect(sockfd, iter->ai_addr, iter->ai_addrlen) != -1) {
+      sock = sockfd;
+      break;
+    }
+
+    if(close(sockfd) == -1) {
+      perror("failed to destroy socket.");
+    }
+   }
+
+   freeaddrinfo(result);
+
+   return sock;
+}
+
 bool mqtt_client_connect(struct MqttClient *client)
 {
   assert(client != NULL);
@@ -159,7 +206,7 @@ bool mqtt_client_connect(struct MqttClient *client)
     return false;
   }
 
-  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  int sockfd = connect_socket_to(client->cfg_host_name, client->cfg_port); 
   if(sockfd == -1) {
     perror("failed to create mqtt socket");
     goto _error_deinit_ssl;

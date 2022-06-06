@@ -20,12 +20,12 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <assert.h>
+#include <time.h>
 
 #include <gpio.h>
 #include <mqtt.h>
 
 #define MQTT_RECONNECT_TIMEOUT 5 // seconds
-
 
 static volatile sig_atomic_t shutdown_requested = 0;
 
@@ -33,10 +33,13 @@ static int ipc_sock = -1;
 
 static struct MqttClient * mqtt_client = NULL;
 
-#define POLLFD_IPC        0 // well defined fd, always the unix socket for IPC 
-#define POLLFD_MQTT       1 // well defined fd, either the timerfd for reconnecting MQTT or the socket for MQTT communications
-#define POLLFD_FIRST_IPC  2 // First ipc client socket slot
-#define POLLFD_LIMIT     32 // number of maximum socket connections
+#define POLLFD_IPC          0 // well defined fd, always the unix socket for IPC 
+#define POLLFD_MQTT         1 // well defined fd, either the timerfd for reconnecting MQTT or the socket for MQTT communications
+#define POLLFD_GPIO_LOCKED  2 // well deifned fd, polls for inputs
+#define POLLFD_GPIO_CLOSED  3 // well deifned fd, polls for inputs
+#define POLLFD_GPIO_BUTTON  4 // well deifned fd, polls for inputs
+#define POLLFD_FIRST_IPC    5 // First ipc client socket slot
+#define POLLFD_LIMIT       32 // number of maximum socket connections
 
 static struct pollfd pollfds[POLLFD_LIMIT];
 static size_t pollfds_size = 2;
@@ -67,8 +70,41 @@ static int create_timeout_timer(int secs);
 static bool send_ipc_info(int fd, char const * text);
 static bool send_ipc_infof(int fd, char const * fmt, ...) __attribute__ ((format (printf, 2, 3)));
 
-int main(int argc, char **argv) {
+struct GpioDefs {
+  // inputs
+  gpio_t * locked;
+  gpio_t * closed;
+  gpio_t * button;
 
+  // outputs:
+  gpio_t * trigger_close; 
+  gpio_t * trigger_open;  
+  gpio_t * acustic_signal;
+};
+
+static struct GpioDefs gpio = {
+  .locked = NULL,
+  .closed = NULL,
+  .button = NULL,
+
+  .trigger_close = NULL,
+  .trigger_open = NULL,
+  .acustic_signal = NULL,
+};
+
+#define PORTAL_GPIO_CHIP "/dev/gpiochip0"
+#define PORTAL_GPIO_LOCKED 1
+#define PORTAL_GPIO_CLOSED 2
+#define PORTAL_GPIO_BUTTON 3
+#define PORTAL_GPIO_TRIGGER_CLOSE 4
+#define PORTAL_GPIO_TRIGGER_OPEN 5
+#define PORTAL_GPIO_ACUSTIC_SIGNAL 6
+
+static bool create_and_open_gpio(gpio_t ** gpio, struct gpio_config const * config, int identifier);
+
+static void close_all_gpios();
+
+int main(int argc, char **argv) {
   // Initialize libraries and dependencies:
 
   if(!install_signal_handlers()) {
@@ -81,6 +117,94 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  // create GPIO management types and open GPIOs
+  {
+    static const struct gpio_config regular_input = {
+      .direction = GPIO_DIR_IN,
+      .edge = GPIO_EDGE_BOTH,
+      .bias = GPIO_BIAS_PULL_UP,
+      .drive = GPIO_DRIVE_DEFAULT,
+      .inverted = false,
+      .label = NULL,
+    };
+    static const struct gpio_config regular_output = {
+      .direction = GPIO_DIR_OUT,
+      .edge = GPIO_EDGE_NONE,
+      .bias = GPIO_BIAS_DEFAULT,
+      .drive = GPIO_DRIVE_DEFAULT, // push pull
+      .inverted = false,
+      .label = NULL,
+    };
+
+    atexit(close_all_gpios);
+    if(!create_and_open_gpio(&gpio.locked, &regular_input, PORTAL_GPIO_LOCKED)) {
+      fprintf(stderr, "failed to open gpio 'locked'.\n");
+      return EXIT_FAILURE;
+    }
+    if(!create_and_open_gpio(&gpio.closed, &regular_input, PORTAL_GPIO_CLOSED)) {
+      fprintf(stderr, "failed to open gpio 'closed'.\n");
+      return EXIT_FAILURE;
+    }
+    if(!create_and_open_gpio(&gpio.button, &regular_input, PORTAL_GPIO_BUTTON)) {
+      fprintf(stderr, "failed to open gpio 'button'.\n");
+      return EXIT_FAILURE;
+    }
+    if(!create_and_open_gpio(&gpio.trigger_close, &regular_output, PORTAL_GPIO_TRIGGER_CLOSE)) {
+      fprintf(stderr, "failed to open gpio 'trigger_close'.\n");
+      return EXIT_FAILURE;
+    }
+    if(!create_and_open_gpio(&gpio.trigger_open, &regular_output, PORTAL_GPIO_TRIGGER_OPEN)) {
+      fprintf(stderr, "failed to open gpio 'trigger_open'.\n");
+      return EXIT_FAILURE;
+    }
+    if(!create_and_open_gpio(&gpio.acustic_signal, &regular_output, PORTAL_GPIO_ACUSTIC_SIGNAL)) {
+      fprintf(stderr, "failed to open gpio 'acustic_signal'.\n");
+      return EXIT_FAILURE;
+    }
+
+    pollfds[PORTAL_GPIO_LOCKED] = (struct pollfd) {
+      .fd = gpio_fd(gpio.locked),
+      .events = POLLIN | POLLERR,
+      .revents = 0,
+    };
+    if(pollfds[PORTAL_GPIO_LOCKED].fd == -1) {
+      fprintf(stderr, "failed to get fd for gpio locked.\n");
+      return EXIT_FAILURE;
+    }
+
+    pollfds[PORTAL_GPIO_CLOSED] = (struct pollfd) {
+      .fd = gpio_fd(gpio.closed),
+      .events = POLLIN | POLLERR,
+      .revents = 0,
+    };
+    if(pollfds[PORTAL_GPIO_CLOSED].fd == -1) {
+      fprintf(stderr, "failed to get fd for gpio closed.\n");
+      return EXIT_FAILURE;
+    }
+
+    pollfds[PORTAL_GPIO_BUTTON] = (struct pollfd) {
+      .fd = gpio_fd(gpio.button),
+      .events = POLLIN | POLLERR,
+      .revents = 0,
+    };
+    if(pollfds[PORTAL_GPIO_BUTTON].fd == -1) {
+      fprintf(stderr, "failed to get fd for gpio button.\n");
+      return EXIT_FAILURE;
+    }
+  }
+
+  if(gpio.locked == NULL
+     || gpio.closed == NULL 
+     || gpio.button == NULL 
+     || gpio.trigger_close == NULL 
+     || gpio.trigger_open == NULL 
+     || gpio.acustic_signal == NULL) {
+    fprintf(stderr, "failed to create GPIO objects.\n");
+    return EXIT_FAILURE;
+  }
+
+  (void)argc;
+  (void)argv;
   struct CliOptions const cli = {
     .host_name = "localhost",
     .port = 8883,
@@ -90,7 +214,6 @@ int main(int argc, char **argv) {
   };
 
   // Create MQTT client from CLI info
-
   mqtt_client = mqtt_client_create(
     cli.host_name,
     cli.port,
@@ -104,9 +227,6 @@ int main(int argc, char **argv) {
   }
   atexit(close_mqtt_client);
   
-  (void)argc;
-  (void)argv;
-
   ipc_sock = ipc_create_socket();
   if (ipc_sock == -1) {
     return EXIT_FAILURE;
@@ -163,6 +283,9 @@ int main(int argc, char **argv) {
       }
       continue;
     }
+
+    struct timespec loop_start, loop_end;
+    clock_gettime(CLOCK_MONOTONIC, &loop_start);
 
     for(size_t i = 0; i < pollfds_size; i++) {
       const struct pollfd pfd = pollfds[i];
@@ -229,6 +352,16 @@ int main(int argc, char **argv) {
                   fprintf(stderr, "failed to connect to mqtt server, retrying in %d seconds\n", MQTT_RECONNECT_TIMEOUT);
               }
             }
+            break;
+          }
+
+          // GPIO events
+          case POLLFD_GPIO_LOCKED:
+          case POLLFD_GPIO_CLOSED:
+          case POLLFD_GPIO_BUTTON: {
+            
+            // 
+
             break;
           }
 
@@ -309,6 +442,37 @@ int main(int argc, char **argv) {
           }
         }
       }
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &loop_end);
+
+    uint64_t total_nsecs = 1000000000UL * (loop_end.tv_sec - loop_start.tv_sec);
+    
+    if ((loop_end.tv_nsec - loop_start.tv_nsec) < 0) {
+        total_nsecs += loop_end.tv_nsec - loop_start.tv_nsec + 1000000000UL;
+        total_nsecs -= 1;
+    } else {
+        total_nsecs += loop_end.tv_nsec - loop_start.tv_nsec;
+    }
+
+    if(total_nsecs > 10000000UL) { // 1ms
+      double time = total_nsecs;
+      char const * unit = "ns";
+
+      if(total_nsecs >= 1500000000UL) {
+        unit = "s";
+        time = total_nsecs / 10000000000.0;
+      }
+      else if(total_nsecs >= 1500000UL) {
+        unit = "ms";
+        time = total_nsecs / 10000000.0;
+      }
+      else if(total_nsecs >= 1500UL) {
+        unit = "us";
+        time = total_nsecs / 1000.0;
+      }
+
+      fprintf(stderr, "main loop is hanging, took %.3f %s\n", time, unit);
     }
   }
 
@@ -480,4 +644,36 @@ static void sigterm_handler(int sig, siginfo_t *info, void *ucontext) {
   (void)info;
   (void)ucontext;
   shutdown_requested = 1;
+}
+
+
+
+static bool create_and_open_gpio(gpio_t ** pin, struct gpio_config const * config, int identifier)
+{
+  assert(pin != NULL);
+  assert(config != NULL);
+  
+  *pin = gpio_new();
+  if(*pin == NULL) {
+    return false;
+  }
+
+  enum gpio_error_code err = gpio_open_advanced(*pin, PORTAL_GPIO_CHIP, identifier, config);
+  if(err != 0) {
+    fprintf(stderr, "failed to open gpio: %s\n", gpio_errmsg(*pin));
+    gpio_free(*pin);
+    return false;
+  }
+
+  return true;
+}
+
+static void close_all_gpios()
+{
+  if(gpio.locked != NULL) free(gpio.locked);
+  if(gpio.closed != NULL) free(gpio.closed);
+  if(gpio.button != NULL) free(gpio.button);
+  if(gpio.trigger_close != NULL) free(gpio.trigger_close);
+  if(gpio.trigger_open != NULL) free(gpio.trigger_open);
+  if(gpio.acustic_signal != NULL) free(gpio.acustic_signal);
 }

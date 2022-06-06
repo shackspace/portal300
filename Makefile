@@ -29,7 +29,7 @@ obj/periphery.a:  obj/periphery-gpio.o obj/periphery-led.o obj/periphery-pwm.o o
 
 # objects for c-periphery
 obj/periphery-%.o: vendor/c-periphery/src/%.c
-	$(CC) $(CFLAGS_LIB) -c -o "$@" $<
+	$(CC) $(CFLAGS_LIB) -c -o "$@" $< -DPERIPHERY_GPIO_CDEV_SUPPORT
 
 # mqtt-c library
 obj/mqtt.a: obj/mqtt-mqtt.o obj/mqtt-mqtt_pal.o
