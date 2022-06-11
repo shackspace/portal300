@@ -2,7 +2,7 @@ CC=gcc
 LD=gcc
 AR=ar
 
-CFLAGS=-DMQTTC_PAL_FILE=portal_mqtt_pal.h -Isrc
+CFLAGS=-DMQTTC_PAL_FILE=portal_mqtt_pal.h -Isrc -g
 CFLAGS_LIB=$(CFLAGS)
 CFLAGS_APP=$(CFLAGS) -pedantic -Wall -Wextra -Werror=missing-prototypes -Werror=strict-prototypes -Werror=format -Werror=shadow -Werror=return-type -Werror=unused-parameter -I vendor/mqtt-c/include -I vendor/c-periphery/src 
 LFLAGS=

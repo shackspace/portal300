@@ -168,6 +168,15 @@ int main(int argc, char **argv) {
       .label = NULL,
     };
 
+    gpio = (struct GpioDefs) {
+      .locked = NULL,
+      .closed = NULL,
+      .button = NULL,
+      .trigger_close = NULL,
+      .trigger_open = NULL,
+      .acustic_signal = NULL,
+    };
+
     atexit(close_all_gpios);
     if(!create_and_open_gpio(&gpio.locked, &regular_input, PORTAL_GPIO_LOCKED)) {
       fprintf(stderr, "failed to open gpio 'locked'.\n");
@@ -852,6 +861,7 @@ static bool create_and_open_gpio(gpio_t ** pin, struct gpio_config const * confi
   if(err != 0) {
     fprintf(stderr, "failed to open gpio: %s\n", gpio_errmsg(*pin));
     gpio_free(*pin);
+    *pin = NULL;
     return false;
   }
 #else
@@ -859,11 +869,42 @@ static bool create_and_open_gpio(gpio_t ** pin, struct gpio_config const * confi
   if(err != 0) {
     fprintf(stderr, "failed to open gpio: %s\n", gpio_errmsg(*pin));
     gpio_free(*pin);
+    *pin = NULL;
     return false;
+  }
+
+  err = gpio_set_edge(*pin, config->edge);
+  if(err != 0) {
+    fprintf(stderr, "failed to set interrupt for gpio: %s\n", gpio_errmsg(*pin));
+    goto cleanup_io;
+  }
+
+  err = gpio_set_bias(*pin, config->bias);
+  if(err != 0) {
+    fprintf(stderr, "failed to set gpio bias: %s\n", gpio_errmsg(*pin));
+    goto cleanup_io;
+  }
+  
+  err = gpio_set_drive(*pin, config->drive);
+  if(err != 0) {
+    fprintf(stderr, "failed to set gpio drive: %s\n", gpio_errmsg(*pin));
+    goto cleanup_io;
+  }
+
+  err = gpio_set_inverted(*pin, config->inverted);
+  if(err != 0) {
+    fprintf(stderr, "failed to set gpio inverted: %s\n", gpio_errmsg(*pin));
+    goto cleanup_io;
   }
 #endif
 
   return true;
+#ifndef PORTAL_GPIO_CHIP
+cleanup_io:
+  gpio_free(*pin);
+  *pin = NULL;
+  return false;
+#endif
 }
 
 static bool set_gpio(gpio_t * pin, bool value)
