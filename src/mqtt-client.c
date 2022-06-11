@@ -1,6 +1,7 @@
 #include "mqtt-client.h"
 
 #include "portal_mqtt_pal.h"
+#include "log.h"
 
 #include <openssl/bio.h>
 #include <openssl/ossl_typ.h>
@@ -34,7 +35,7 @@ bool mqtt_client_init()
   SSL_load_error_strings();
 
   if(SSL_library_init() < 0) {
-    fprintf(stderr, "failed to initialize SSL library\n");
+    log_write(LSS_MQTT, LL_ERROR, "failed to initialize SSL library");
     return false;
   }
 
@@ -88,19 +89,19 @@ struct MqttClient *mqtt_client_create(
   }
 
   if(SSL_CTX_load_verify_locations(client->ctx, ca_cert, NULL) != 1) {
-    fprintf(stderr, "failed to load ca\n");
+    log_write(LSS_MQTT, LL_ERROR, "failed to load ca");
     goto _error_deinit_ctx;
   }
   if(SSL_CTX_use_certificate_file(client->ctx, client_cert, SSL_FILETYPE_PEM) != 1) {
-    fprintf(stderr, "failed to load cert\n");
+    log_write(LSS_MQTT, LL_ERROR, "failed to load cert");
     goto _error_deinit_ctx;
   }
   if(SSL_CTX_use_PrivateKey_file(client->ctx, client_key, SSL_FILETYPE_PEM) != 1) {
-    fprintf(stderr, "failed to load key\n");
+    log_write(LSS_MQTT, LL_ERROR, "failed to load key");
     goto _error_deinit_ctx;
   }
   if (SSL_CTX_check_private_key(client->ctx) != 1) {
-    fprintf(stderr, "key and cert do not match!\n");
+    log_write(LSS_MQTT, LL_ERROR, "key and cert do not match!");
     goto _error_deinit_ctx;
   }
 
@@ -142,14 +143,14 @@ static void publish_callback(void** unused, struct mqtt_response_publish *publis
 {
   (void)unused;
   (void)published;
-  fprintf(stderr, "publish callback was triggered!\n");
-  fprintf(stderr, "published data:\n"
-                  "  topic: %.*s\n"
-                  "  data:  %.*s\n",
-                  (int)published->topic_name_size,
-                  (char const *)published->topic_name,
-                  (int)published->application_message_size,
-                  (char const *)published->application_message);
+  log_write(LSS_MQTT, LL_MESSAGE, "publish callback was triggered!");
+  log_print(LSS_MQTT, LL_MESSAGE, "published data:\n"
+                                  "  topic: %.*s\n"
+                                  "  data:  %.*s",
+                                  (int)published->topic_name_size,
+                                  (char const *)published->topic_name,
+                                  (int)published->application_message_size,
+                                  (char const *)published->application_message);
 }
 
 static int connect_socket_to(char const * host_name, int port)
@@ -167,11 +168,10 @@ static int connect_socket_to(char const * host_name, int port)
   char port_name[64];
   snprintf(port_name, sizeof port_name, "%d", port);
 
-
   struct addrinfo *result;
   int error = getaddrinfo(host_name, port_name, &hints, &result);
   if (error != 0) {
-    fprintf(stderr, "failed to query address info: %s\n", gai_strerror(error));
+    log_print(LSS_MQTT, LL_ERROR, "failed to query address info: %s", gai_strerror(error));
     return -1;
   }
 
@@ -216,12 +216,12 @@ bool mqtt_client_connect(struct MqttClient *client)
 
   int ssl_err;
   if((ssl_err = SSL_connect(ssl)) != 1 ) {
-    fprintf(stderr, "failed to perform SSL handshake: %d\n", SSL_get_error(ssl, ssl_err));
+    log_print(LSS_MQTT, LL_ERROR, "failed to perform SSL handshake: %d", SSL_get_error(ssl, ssl_err));
     goto _error_deinit_socket;
   }
 
   if (SSL_get_verify_result(ssl) != X509_V_OK) {
-    fprintf(stderr, "host verification of handshake failed\n");
+    log_print(LSS_MQTT, LL_ERROR, "host verification of handshake failed");
     goto _error_deinit_socket;
   }
 
@@ -244,19 +244,19 @@ bool mqtt_client_connect(struct MqttClient *client)
 
   err = mqtt_init(&client->client, ssl, client->sendbuf, sizeof(client->sendbuf), client->recvbuf, sizeof(client->recvbuf), publish_callback);
   if(err != MQTT_OK) {
-    fprintf(stderr, "failed to initialize mqtt client\n");
+    log_print(LSS_MQTT, LL_ERROR, "failed to initialize mqtt client");
     goto _error_deinit_ssl;
   }
 
   err = mqtt_connect(&client->client, "portal client", NULL, NULL, 0, NULL, NULL, 0, 400);
   if (err != MQTT_OK) {
-    fprintf(stderr, "failed to connect to mqtt server: %s\n", mqtt_error_str(err));
+    log_print(LSS_MQTT, LL_ERROR, "failed to connect to mqtt server: %s", mqtt_error_str(err));
     goto _error_deinit_mqtt;
   }
 
   /* check that we don't have any errors */
   if (client->client.error != MQTT_OK) {
-    fprintf(stderr, "failed to connect to mqtt server: %s\n", mqtt_error_str(client->client.error));
+    log_print(LSS_MQTT, LL_ERROR, "failed to connect to mqtt server: %s", mqtt_error_str(client->client.error));
     goto _error_deinit_mqtt;
   }
 
@@ -272,7 +272,7 @@ _error_deinit_mqtt:
 
 _error_deinit_socket:
   if(close(sockfd) == -1) {
-    perror("failed to close mqtt socket");
+    log_perror(LSS_MQTT, LL_WARNING, "failed to close mqtt socket");
   }
 _error_deinit_ssl:
   SSL_free(ssl);
@@ -291,7 +291,7 @@ void mqtt_client_disconnect(struct MqttClient *client)
     SSL_free(client->ssl);
   }
   if(close(client->socket) == -1) {
-    perror("failed to close MQTT socket handle");
+    log_print(LSS_MQTT, LL_WARNING, "failed to close MQTT socket handle");
   }
 
   client->ssl = NULL;
@@ -322,7 +322,7 @@ bool mqtt_client_sync(struct MqttClient *client)
         return false;
 
       default:
-        fprintf(stderr, "mqtt_sync() failed: %s\n", mqtt_error_str(err));
+        log_print(LSS_MQTT, LL_ERROR, "mqtt_sync() failed: %s", mqtt_error_str(err));
         break;
   }
 
@@ -338,13 +338,13 @@ bool mqtt_client_subscribe(struct MqttClient *client, char const * topic)
   enum MQTTErrors err = mqtt_subscribe(&client->client, topic, 2);
   
   if(err != MQTT_OK) {
-    fprintf(stderr, "failed to subscribe to mqtt topic: %s\n", mqtt_error_str(err));
+    log_print(LSS_MQTT, LL_ERROR, "failed to subscribe to mqtt topic: %s", mqtt_error_str(err));
     return false;
   }
 
     /* check for errors */
   if (client->client.error != MQTT_OK) {
-    fprintf(stderr, "failed to subscribe to mqtt topic: %s\n", mqtt_error_str(client->client.error));
+    log_print(LSS_MQTT, LL_ERROR, "failed to subscribe to mqtt topic: %s", mqtt_error_str(client->client.error));
     return false;
   }
 
@@ -372,13 +372,13 @@ bool mqtt_client_publish(struct MqttClient *client, char const * topic, char con
     flags[qos]
   );
   if(err != MQTT_OK) {
-    fprintf(stderr, "failed to publish mqtt message: %s\n", mqtt_error_str(err));
+    log_print(LSS_MQTT, LL_ERROR, "failed to publish mqtt message: %s", mqtt_error_str(err));
     return false;
   }
 
     /* check for errors */
   if (client->client.error != MQTT_OK) {
-    fprintf(stderr, "failed to publish mqtt message: %s\n", mqtt_error_str(client->client.error));
+    log_print(LSS_MQTT, LL_ERROR, "failed to publish mqtt message: %s", mqtt_error_str(client->client.error));
     return false;
   }
 
@@ -423,7 +423,7 @@ ssize_t mqtt_pal_sendall(mqtt_pal_socket_handle fd, const void *buf, size_t buff
         case SSL_ERROR_ZERO_RETURN: // end of stream
           return MQTT_ERROR_CONNECTION_CLOSED;
         default: 
-          fprintf(stderr, "SSL_write() failed: %d\n", error_code);
+          log_print(LSS_MQTT, LL_ERROR, "SSL_write() failed: %d", error_code);
           return MQTT_ERROR_SOCKET_ERROR;
       }
     }
@@ -468,7 +468,7 @@ ssize_t mqtt_pal_recvall(mqtt_pal_socket_handle fd, void *buffer_erased, size_t 
         case SSL_ERROR_ZERO_RETURN: // end of stream
           return MQTT_ERROR_CONNECTION_CLOSED;
         default: 
-          fprintf(stderr, "SSL_read() failed: %d\n", error_code);
+          log_print(LSS_MQTT, LL_ERROR, "SSL_read() failed: %d", error_code);
           return MQTT_ERROR_SOCKET_ERROR;
       }
     }

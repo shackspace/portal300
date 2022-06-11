@@ -9,6 +9,7 @@
 #include <stdbool.h>
 
 #include "ipc.h"
+#include "log.h"
 
 static void print_usage(FILE * stream);
 static void panic(char const * msg);
@@ -120,7 +121,7 @@ int main(int argc, char ** argv)
         }
 
         default:
-          fprintf(stderr, "received invalid ipc message of type %u\n", msg.type);
+          log_print(LSS_SYSTEM, LL_WARNING, "received invalid ipc message of type %u\n", msg.type);
           break;
       }
     }
@@ -164,7 +165,7 @@ static void close_ipc_socket()
 
 static void panic(char const * msg)
 {
-  fprintf(stderr, "\n\nPANIC: %s\n\n\n", msg);
+  log_print(LSS_SYSTEM, LL_ERROR, "\n\nPANIC: %s\n\n\n", msg);
   exit(EXIT_FAILURE);
 }
 
@@ -291,7 +292,7 @@ static int connecToDaemon()
   }
 
   if(connect(sock, (struct sockaddr const *) &ipc_socket_address, sizeof ipc_socket_address) == -1) {
-    fprintf(stderr, "failed to connect to daemon: %s\n", strerror(errno));
+    log_print(LSS_SYSTEM, LL_ERROR, "failed to connect to daemon: %s\n", strerror(errno));
     close(sock);
     return -1;
   }

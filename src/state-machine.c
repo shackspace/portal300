@@ -1,6 +1,7 @@
 #include "state-machine.h"
-#include <assert.h>
+#include "log.h"
 
+#include <assert.h>
 #include <stdio.h>
 
 #define TIMEOUT_BUTTON_PRESS     100 // ms (Duration of a motor button press)
@@ -48,7 +49,7 @@ static char const * const door_state_names[] = {
 //! state. We design the state machine as such that it is not necessary to know the old state.
 static void set_state(struct StateMachine *sm, enum State state)
 {
-  fprintf(stderr, "switching state machine from %s to %s\n", state_names[sm->logic_state], state_names[state]);
+  log_print(LSS_LOGIC, LL_VERBOSE, "switching state machine from %s to %s", state_names[sm->logic_state], state_names[state]);
   sm->logic_state = state;
   switch(state)
   {
@@ -152,7 +153,7 @@ void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state)
   if(sm->door_state == new_state)
     return;
 
-  fprintf(stderr, "SM: door changed status from %s to %s.\n", 
+  log_print(LSS_LOGIC, LL_VERBOSE, "SM: door changed status from %s to %s.", 
     door_state_names[sm->door_state],
     door_state_names[new_state]
   );
@@ -164,7 +165,7 @@ void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state)
     // states that do not expect event changes:
     case STATE_INIT_OPEN:
     case STATE_INIT_LOCK: {
-      fprintf(stderr, "unexpected door change event in state %u!\n", sm->logic_state);
+      log_print(LSS_LOGIC, LL_WARNING, "unexpected door change event in state %u!", sm->logic_state);
       // TODO: Handle this gracefully
       break;
     }
@@ -189,7 +190,7 @@ void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state)
         set_state(sm, STATE_WAIT_FOR_OPEN);
       }
       else {
-        fprintf(stderr, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!\n");
+        log_print(LSS_LOGIC, LL_WARNING, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!");
       }
       break;
     }
@@ -200,7 +201,7 @@ void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state)
         set_state(sm, STATE_IDLE);
       }
       else {
-        fprintf(stderr, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!\n");
+        log_print(LSS_LOGIC, LL_WARNING, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!");
       }
       break;
     }
@@ -211,7 +212,7 @@ void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state)
         set_state(sm, STATE_INIT_LOCK);
       }
       else {
-        fprintf(stderr, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!\n");
+        log_print(LSS_LOGIC, LL_WARNING, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!");
       }
       break;
     }
@@ -222,7 +223,7 @@ void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state)
         set_state(sm, STATE_IDLE);
       }
       else {
-        fprintf(stderr, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!\n");
+        log_print(LSS_LOGIC, LL_WARNING, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!");
       }
       break;
     }
@@ -284,7 +285,7 @@ enum PortalError sm_send_event(struct StateMachine *sm, enum PortalEvent event)
     case EVENT_TIMEOUT: {
       switch(sm->logic_state) {
         case STATE_IDLE: {
-          fprintf(stderr, "unexpected EVENT_TIMEOUT in state %u\n", sm->logic_state);
+          log_print(LSS_LOGIC, LL_WARNING, "unexpected EVENT_TIMEOUT in state %u", sm->logic_state);
           break;
         }
 

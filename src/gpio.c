@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE   600 /* for POLLRDNORM */
 
 #include "gpio.h"
+#include "log.h"
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -27,18 +28,18 @@ bool gpio_open(struct GpioHandle *io, char const *chip)
 
     int fd = open(chip, O_RDWR);
     if(fd < 0) {
-        perror("failed to open gpiochip");
+        log_perror(LSS_GPIO, LL_ERROR, "failed to open gpiochip");
         return false;
     }
 
     /* Get chip info for number of lines */
     struct gpiochip_info chip_info = {0};
     if (ioctl(fd, GPIO_GET_CHIPINFO_IOCTL, &chip_info) < 0) {
-        perror("failed to invoke GPIO_GET_CHIPINFO_IOCTL");
+        log_perror(LSS_GPIO, LL_ERROR, "failed to invoke GPIO_GET_CHIPINFO_IOCTL");
         goto failure;
     }
 
-    fprintf(stderr, "opened gpio chip %s / %s with %u io lines\n",
+    log_print(LSS_GPIO, LL_VERBOSE, "opened gpio chip %s / %s with %u io lines",
         chip_info.name,
         chip_info.label,
         chip_info.lines
@@ -80,32 +81,32 @@ void gpio_close(struct GpioHandle *io)
 bool gpio_validate_config(struct GpioConfig config)
 {
     if (config.direction != GPIO_DIR_IN && config.direction != GPIO_DIR_OUT && config.direction != GPIO_DIR_OUT_LOW && config.direction != GPIO_DIR_OUT_HIGH) {
-        fprintf(stderr, "Invalid GPIO direction (can be in, out, low, high)\n");
+        log_print(LSS_GPIO, LL_WARNING, "Invalid GPIO direction (can be in, out, low, high)");
         return false;
     }
 
     if (config.edge != GPIO_EDGE_NONE && config.edge != GPIO_EDGE_RISING && config.edge != GPIO_EDGE_FALLING && config.edge != GPIO_EDGE_BOTH) {
-        fprintf(stderr, "Invalid GPIO interrupt edge (can be none, rising, falling, both)\n");
+        log_print(LSS_GPIO, LL_WARNING, "Invalid GPIO interrupt edge (can be none, rising, falling, both)");
         return false;
     }
 
     if (config.direction != GPIO_DIR_IN && config.edge != GPIO_EDGE_NONE) {
-        fprintf(stderr, "Invalid GPIO edge for output GPIO\n");
+        log_print(LSS_GPIO, LL_WARNING, "Invalid GPIO edge for output GPIO");
         return false;
     }
 
     if (config.bias != GPIO_BIAS_DEFAULT && config.bias != GPIO_BIAS_PULL_UP && config.bias != GPIO_BIAS_PULL_DOWN && config.bias != GPIO_BIAS_DISABLE) {
-        fprintf(stderr, "Invalid GPIO line bias (can be default, pull_up, pull_down, disable)\n");
+        log_print(LSS_GPIO, LL_WARNING, "Invalid GPIO line bias (can be default, pull_up, pull_down, disable)");
         return false;
     }
 
     if (config.drive != GPIO_DRIVE_DEFAULT && config.drive != GPIO_DRIVE_OPEN_DRAIN && config.drive != GPIO_DRIVE_OPEN_SOURCE) {
-        fprintf(stderr, "Invalid GPIO line drive (can be default, open_drain, open_source)\n");
+        log_print(LSS_GPIO, LL_WARNING, "Invalid GPIO line drive (can be default, open_drain, open_source)");
         return false;
     }
 
     if (config.direction == GPIO_DIR_IN && config.drive != GPIO_DRIVE_DEFAULT) {
-        fprintf(stderr, "Invalid GPIO line drive for input GPIO\n");
+        log_print(LSS_GPIO, LL_WARNING, "Invalid GPIO line drive for input GPIO");
         return false;
     }
 

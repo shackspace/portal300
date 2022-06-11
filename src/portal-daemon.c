@@ -1,4 +1,5 @@
 #include "ipc.h"
+#include "log.h"
 #include "mqtt-client.h"
 #include "state-machine.h"
 #include "gpio.h"
@@ -126,13 +127,13 @@ int main(int argc, char **argv) {
   // Initialize libraries and dependencies:
 
   if(!install_signal_handlers()) {
-    fprintf(stderr, "failed to install signal handlers.\n");
+    log_print(LSS_SYSTEM, LL_ERROR, "failed to install signal handlers.");
     exit(EXIT_FAILURE);
   }
 
   sm_timeout_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
   if(sm_timeout_fd == -1) {
-    perror("failed to create sm_timeout_fd");
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to create sm_timeout_fd");
     return EXIT_FAILURE;
   }
   atexit(close_sm_timeout_fd);
@@ -144,7 +145,7 @@ int main(int argc, char **argv) {
   };
 
   if(!mqtt_client_init()) {
-    fprintf(stderr, "failed to initialize mqtt client library. aborting.\n");
+    log_write(LSS_MQTT, LL_ERROR, "failed to initialize mqtt client library. aborting.");
     return EXIT_FAILURE;
   }
 
@@ -173,27 +174,27 @@ int main(int argc, char **argv) {
     };
 
     if(!create_and_open_gpio(&gpio.locked, regular_input, "portal.locked", PORTAL_GPIO_LOCKED)) {
-      fprintf(stderr, "failed to open gpio 'locked'.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to open gpio 'locked'.");
       return EXIT_FAILURE;
     }
     if(!create_and_open_gpio(&gpio.closed, regular_input, "portal.closed", PORTAL_GPIO_CLOSED)) {
-      fprintf(stderr, "failed to open gpio 'closed'.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to open gpio 'closed'.");
       return EXIT_FAILURE;
     }
     if(!create_and_open_gpio(&gpio.button, regular_input, "portal.button", PORTAL_GPIO_BUTTON)) {
-      fprintf(stderr, "failed to open gpio 'button'.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to open gpio 'button'.");
       return EXIT_FAILURE;
     }
     if(!create_and_open_gpio(&gpio.trigger_close, regular_output, "portal.trigger_close", PORTAL_GPIO_TRIGGER_CLOSE)) {
-      fprintf(stderr, "failed to open gpio 'trigger_close'.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to open gpio 'trigger_close'.");
       return EXIT_FAILURE;
     }
     if(!create_and_open_gpio(&gpio.trigger_open, regular_output, "portal.trigger_open", PORTAL_GPIO_TRIGGER_OPEN)) {
-      fprintf(stderr, "failed to open gpio 'trigger_open'.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to open gpio 'trigger_open'.");
       return EXIT_FAILURE;
     }
     if(!create_and_open_gpio(&gpio.acustic_signal, regular_output, "portal.acustic_signal", PORTAL_GPIO_ACUSTIC_SIGNAL)) {
-      fprintf(stderr, "failed to open gpio 'acustic_signal'.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to open gpio 'acustic_signal'.");
       return EXIT_FAILURE;
     }
 
@@ -203,7 +204,7 @@ int main(int argc, char **argv) {
       .revents = 0,
     };
     if(pollfds[POLLFD_GPIO_LOCKED].fd == -1) {
-      fprintf(stderr, "failed to get fd for gpio locked.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to get fd for gpio locked.");
       return EXIT_FAILURE;
     }
 
@@ -213,7 +214,7 @@ int main(int argc, char **argv) {
       .revents = 0,
     };
     if(pollfds[POLLFD_GPIO_CLOSED].fd == -1) {
-      fprintf(stderr, "failed to get fd for gpio closed.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to get fd for gpio closed.");
       return EXIT_FAILURE;
     }
 
@@ -223,7 +224,7 @@ int main(int argc, char **argv) {
       .revents = 0,
     };
     if(pollfds[POLLFD_GPIO_BUTTON].fd == -1) {
-      fprintf(stderr, "failed to get fd for gpio button.\n");
+      log_write(LSS_GPIO, LL_ERROR, "failed to get fd for gpio button.");
       return EXIT_FAILURE;
     }
   }
@@ -234,7 +235,7 @@ int main(int argc, char **argv) {
      || gpio.trigger_close.io == NULL 
      || gpio.trigger_open.io == NULL 
      || gpio.acustic_signal.io == NULL) {
-    fprintf(stderr, "failed to create GPIO objects.\n");
+    log_write(LSS_GPIO, LL_ERROR, "failed to create GPIO objects.");
     return EXIT_FAILURE;
   }
 
@@ -257,7 +258,7 @@ int main(int argc, char **argv) {
     cli.client_crt_file
   );
   if(mqtt_client == NULL) {
-    fprintf(stderr, "failed to create mqtt client.\n");
+    log_write(LSS_MQTT, LL_ERROR, "failed to create mqtt client.");
     return EXIT_FAILURE;
   }
   atexit(close_mqtt_client);
@@ -278,7 +279,7 @@ int main(int argc, char **argv) {
   }
   else
   {
-    fprintf(stderr, "failed to connect to mqtt server, retrying in %d seconds\n", MQTT_RECONNECT_TIMEOUT);
+    log_print(LSS_MQTT, LL_WARNING, "failed to connect to mqtt server, retrying in %d seconds", MQTT_RECONNECT_TIMEOUT);
 
     // we failed to connect to MQTT, set up a timerfd to retry in some seconds
     int timer = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
@@ -293,14 +294,14 @@ int main(int argc, char **argv) {
   // Bind and setup the ipc socket, so we can receive ipc messages 
   {
     if(bind(ipc_sock, (struct sockaddr const *) &ipc_socket_address, sizeof ipc_socket_address) == -1) {
-      perror("failed to bind ipc socket");
-      fprintf(stderr, "is another instance of this daemon already running?\n");
+      log_perror(LSS_IPC, LL_ERROR, "failed to bind ipc socket");
+      log_print(LSS_IPC, LL_ERROR, "is another instance of this daemon already running?");
       return EXIT_FAILURE;
     }
     atexit(close_ipc_sock);
 
     if(listen(ipc_sock, 0) == -1) {
-      perror("failed to listen on ipc socket");
+      log_perror(LSS_IPC, LL_ERROR, "failed to listen on ipc socket");
       return EXIT_FAILURE;
     }
     pollfds[POLLFD_IPC] = (struct pollfd) {
@@ -317,11 +318,11 @@ int main(int argc, char **argv) {
   sm_init(&portal_state, initial_door_state, statemachine_handle_signal, statemachine_handle_setTimeout, statemachine_handle_setIo, NULL);
   
   if(!update_state_machine_io(&portal_state)) {
-    fprintf(stderr, "failed to get initial state of GPIO pins!\n");
+    log_write(LSS_GPIO, LL_ERROR, "failed to get initial state of GPIO pins!");
     return EXIT_FAILURE;
   }
 
-  // TODO: Implement state machine interaction
+  // TODO: Set sane state 
   gpio_write(gpio.acustic_signal, 0);
   gpio_write(gpio.trigger_close, 0);
   gpio_write(gpio.trigger_open, 0);
@@ -330,7 +331,7 @@ int main(int argc, char **argv) {
     int const poll_ret = poll(pollfds, pollfds_size, -1); // wait infinitly for an event
     if(poll_ret == -1) {
       if(errno != EINTR) {
-        perror("poll failed");
+        log_perror(LSS_SYSTEM, LL_ERROR, "central poll failed");
       }
       continue;
     }
@@ -350,16 +351,16 @@ int main(int argc, char **argv) {
             if(client_fd != -1) {
               size_t const index = add_ipc_client(client_fd);
               if(index != INVALID_IPC_CLIENT) {
-                fprintf(stderr, "accepted new IPC client on connection slot %zu\n", index);
+                 log_print(LSS_IPC, LL_MESSAGE, "accepted new IPC client on connection slot %zu", index);
               }
               else {
                 if(close(client_fd) == -1) {
-                  perror("failed to close ipc socket connection");
+                  log_perror(LSS_IPC, LL_WARNING, "failed to close ipc socket connection");
                 }
               }
             }
             else {
-              perror("failed to accept ipc client");
+              log_perror(LSS_IPC, LL_WARNING, "failed to accept ipc client");
             }
             break;
           }
@@ -373,34 +374,32 @@ int main(int argc, char **argv) {
               if(!mqtt_client_sync(mqtt_client)) {
                 if(mqtt_client_is_connected(mqtt_client)) {
                   // TODO: Handle mqtt errors
-                  fprintf(stderr, "Handle MQTT error here gracefully\n");
+                  log_write(LSS_MQTT, LL_ERROR, "Handle MQTT error here gracefully");
                 }
                 else {
-                  fprintf(stderr, "Lost connection to MQTT, reconnecting in %d seconds...\n", MQTT_RECONNECT_TIMEOUT);
+                  log_print(LSS_MQTT, LL_WARNING, "Lost connection to MQTT, reconnecting in %d seconds...", MQTT_RECONNECT_TIMEOUT);
                   pollfds[i].fd = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
                 }
               }
             }
             else {
-              uint64_t counter;
-              int res = read(pfd.fd, &counter, sizeof counter);
-              if(res == -1) {
-                perror("failed to read from timerfd");
-                fprintf(stderr, "destroying daemon, hoping for restart...\n");
+              if(!fetch_timer_fd(pfd.fd)) {
+                log_perror(LSS_MQTT, LL_ERROR, "failed to read from timerfd");
+                log_write(LSS_MQTT, LL_ERROR, "destroying daemon, hoping for restart...");
                 exit(EXIT_FAILURE);
               }
 
               if(try_connect_mqtt()) {
-                fprintf(stderr, "successfully reconnected to mqtt server.\n");
+                log_write(LSS_MQTT, LL_MESSAGE, "successfully reconnected to mqtt server.");
 
                 if(close(pfd.fd) == -1) {
-                  perror("failed to destroy timerfd");
+                  log_perror(LSS_MQTT, LL_WARNING, "failed to destroy timerfd");
                 }
 
                 pollfds[i].fd = mqtt_client_get_socket_fd(mqtt_client);
               }
               else {
-                  fprintf(stderr, "failed to connect to mqtt server, retrying in %d seconds\n", MQTT_RECONNECT_TIMEOUT);
+                  log_print(LSS_MQTT, LL_WARNING, "failed to connect to mqtt server, retrying in %d seconds", MQTT_RECONNECT_TIMEOUT);
               }
             }
             break;
@@ -413,19 +412,19 @@ int main(int argc, char **argv) {
             if(i == POLLFD_GPIO_LOCKED) {
               enum GpioEdge edge;
               if(!gpio_get_event(gpio.locked, &edge)) {
-                fprintf(stderr, "failed to read event for gpio locked\n");
+                log_write(LSS_GPIO, LL_ERROR, "failed to read event for gpio locked");
               }
             }
             else if(i == POLLFD_GPIO_CLOSED) {
               enum GpioEdge edge;
               if(!gpio_get_event(gpio.closed, &edge)) {
-                fprintf(stderr, "failed to read event for gpio closed\n");
+                log_write(LSS_GPIO, LL_ERROR, "failed to read event for gpio closed");
               }
             }
             else if(i == POLLFD_GPIO_BUTTON) {
               enum GpioEdge edge;
               if(!gpio_get_event(gpio.button, &edge)) {
-                fprintf(stderr, "failed to read event for gpio button\n");
+                log_write(LSS_GPIO, LL_ERROR, "failed to read event for gpio button");
               }
             }
             else {
@@ -434,30 +433,29 @@ int main(int argc, char **argv) {
             }
 
             if(!update_state_machine_io(&portal_state)) {
-              fprintf(stderr, "failed to get initial state of GPIO pins!\n");
+              log_write(LSS_GPIO, LL_ERROR, "failed to get initial state of GPIO pins!");
               return EXIT_FAILURE;
             }
 
             bool button_state;
             if(gpio_read(gpio.button, &button_state)) {
 
-              // fprintf(stderr, "button = %s\n", button_state ? "pressed" : "released");
+              log_print(LSS_GPIO, LL_VERBOSE, "button = %s", button_state ? "pressed" : "released");
 
               if(button_state) {
                 enum PortalError err = sm_send_event(&portal_state, EVENT_CLOSE);
                 if(err == SM_SUCCESS) {
-                  fprintf(stderr, "Triggering physical closing by button. Portal is now closing...\n");
+                  log_write(LSS_GPIO, LL_MESSAGE, "Triggering physical closing by button. Portal is now closing...");
                 }
                 else {
-                  fprintf(stderr, "Failed to close portal via physical button: error_code=%u\n", err);
+                  log_print(LSS_GPIO, LL_ERROR, "Failed to close portal via physical button: error_code=%u", err);
                 }
               }
 
             }
             else {
-              fprintf(stderr, "failed to query button state\n");
+              log_write(LSS_GPIO, LL_ERROR, "failed to query button state");
             }
-
             break;
           }
 
@@ -465,7 +463,9 @@ int main(int argc, char **argv) {
           case POLLFD_SM_TIMEOUT: {
             
             if(!fetch_timer_fd(sm_timeout_fd)) {
-              fprintf(stderr, "failed to fetch data from state machine.\n"); 
+              log_write(LSS_LOGIC, LL_ERROR, "failed to fetch data from state machine."); 
+              log_write(LSS_LOGIC, LL_ERROR, "destroying daemon, hoping for restart...");
+              exit(EXIT_FAILURE);
             }
 
             enum PortalError err = sm_send_event(&portal_state, EVENT_TIMEOUT);
@@ -477,12 +477,12 @@ int main(int argc, char **argv) {
 
               // this should not happen, log it when it does
               case SM_ERR_IN_PROGRESS: {
-                fprintf(stderr, "unexpected error from sm_send_event(EVENT_TIMEOUT): in progress.\n"); 
+                log_write(LSS_LOGIC, LL_ERROR, "unexpected error from sm_send_event(EVENT_TIMEOUT): in progress.");
                 break;
               }
               
               case SM_ERR_UNEXPECTED: {
-                fprintf(stderr, "timerfd triggered while state machine did not expect a EVENT_TIMEOUT. Did some race condition happen?\n"); 
+                log_write(LSS_LOGIC, LL_ERROR, "timerfd triggered while state machine did not expect a EVENT_TIMEOUT. Did some race condition happen?"); 
                 break;
               }
             }
@@ -493,7 +493,7 @@ int main(int argc, char **argv) {
           // IPC client message or error
           default: {
             if(pfd.revents & POLLERR) {
-              fprintf(stderr, "lost IPC client on connection slot %zu\n", i);
+              log_print(LSS_IPC, LL_MESSAGE, "lost IPC client on connection slot %zu", i);
               remove_ipc_client(i);
             }
             else if(pfd.revents & POLLIN) {
@@ -504,7 +504,7 @@ int main(int argc, char **argv) {
               switch(msg_ok) {
                 case IPC_EOF: {
                   remove_ipc_client(i);
-                  fprintf(stderr, "connection to ipc socket slot %zu closed\n", i);
+                  log_print(LSS_IPC, LL_MESSAGE, "connection to ipc socket slot %zu closed", i);
                   break;
                 }
                 case IPC_ERROR: {
@@ -514,7 +514,7 @@ int main(int argc, char **argv) {
                 case IPC_SUCCESS: {
                   switch(msg.type) {
                     case IPC_MSG_OPEN: {
-                      fprintf(stderr, "client %zu requested portal opening for (%d, '%.*s', '%.*s').\n", 
+                      log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal opening for (%d, '%.*s', '%.*s').", 
                         i,
                         msg.data.open.member_id,
                         (int)strnlen(msg.data.open.member_nick, sizeof msg.data.open.member_nick),
@@ -541,7 +541,7 @@ int main(int argc, char **argv) {
                     }
 
                     case IPC_MSG_CLOSE: {
-                      fprintf(stderr, "client %zu requested portal close.\n", i);
+                      log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal close.", i);
                       
                       enum PortalError err = sm_send_event(&portal_state, EVENT_CLOSE);
                       if(err != SM_SUCCESS) {
@@ -561,7 +561,7 @@ int main(int argc, char **argv) {
                     }
 
                     case IPC_MSG_SHUTDOWN: {
-                      fprintf(stderr, "client %zu requested portal shutdown.", i);
+                      log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal shutdown.", i);
 
                       send_ipc_infof(pfd.fd, "Shutdown wird zur Zeit noch nicht unterstützt...");
                       remove_ipc_client(i);
@@ -570,7 +570,7 @@ int main(int argc, char **argv) {
                     }
 
                     case IPC_MSG_QUERY_STATUS: {
-                      fprintf(stderr, "client %zu requested portal status.\n", i);
+                      log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal status.", i);
 
                       (void)send_ipc_infof(pfd.fd, "Portal-Status:");
                       (void)send_ipc_infof(pfd.fd, "  Aktivität:     %s", "???"); // idle, öffnen, schließen
@@ -588,7 +588,7 @@ int main(int argc, char **argv) {
 
                     default: {
                       // Invalid message received. Print error message and kick the client
-                      fprintf(stderr, "received invalid ipc message of type %u\n", msg.type);
+                      log_print(LSS_IPC, LL_WARNING, "received invalid ipc message of type %u", msg.type);
                       remove_ipc_client(i);
                       break;
                     }
@@ -631,7 +631,7 @@ int main(int argc, char **argv) {
         time = total_nsecs / 1000.0;
       }
 
-      fprintf(stderr, "main loop is hanging, took %.3f %s\n", time, unit);
+      log_print(LSS_SYSTEM, LL_WARNING, "main loop is hanging, took %.3f %s", time, unit);
     }
   }
 
@@ -642,11 +642,11 @@ static enum DoorState fetch_door_state()
 {
   bool closed, locked;
   if(!gpio_read(gpio.closed, &closed)) {
-    fprintf(stderr, "failed to query gpio.closed\n");
+    log_print(LSS_GPIO, LL_ERROR, "failed to query gpio.closed");
     return false;
   }
   if(!gpio_read(gpio.locked, &locked)) {
-    fprintf(stderr, "failed to query gpio.locked\n");
+    log_print(LSS_GPIO, LL_ERROR, "failed to query gpio.locked");
     return false;
   }
 
@@ -669,18 +669,66 @@ static void statemachine_handle_signal(struct StateMachine *sm, enum PortalSigna
 {
   (void)sm;
   switch(signal) {
-    case SIGNAL_OPENING: fprintf(stderr, "received state machine signal: %s\n", "opening"); break;
-    case SIGNAL_LOCKING: fprintf(stderr, "received state machine signal: %s\n", "locking"); break;
-    case SIGNAL_UNLOCKED: fprintf(stderr, "received state machine signal: %s\n", "unlocked"); break;
-    case SIGNAL_OPENED: fprintf(stderr, "received state machine signal: %s\n", "opened"); break;
-    case SIGNAL_NO_ENTRY: fprintf(stderr, "received state machine signal: %s\n", "no entry"); break;
-    case SIGNAL_LOCKED: fprintf(stderr, "received state machine signal: %s\n", "locked"); break;
-    case SIGNAL_ERROR_LOCKING: fprintf(stderr, "received state machine signal: %s\n", "error locking"); break;
-    case SIGNAL_ERROR_OPENING: fprintf(stderr, "received state machine signal: %s\n", "error opening"); break;
-    case SIGNAL_CLOSE_TIMEOUT: fprintf(stderr, "received state machine signal: %s\n", "close timeout"); break;
-    case SIGNAL_WAIT_FOR_DOOR_CLOSED: fprintf(stderr, "received state machine signal: %s\n", "wait for door closed"); break;
-    case SIGNAL_DOOR_MANUALLY_UNLOCKED: fprintf(stderr, "received state machine signal: %s\n", "door manually unlocked"); break;
-    case SIGNAL_DOOR_MANUALLY_LOCKED: fprintf(stderr, "received state machine signal: %s\n", "door manually locked"); break;
+    case SIGNAL_OPENING: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "opening");
+      break;
+    }
+
+    case SIGNAL_LOCKING: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "locking");
+      break;
+    }
+
+    case SIGNAL_UNLOCKED: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "unlocked");
+      break;
+    }
+
+    case SIGNAL_OPENED: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "opened");
+      break;
+    }
+
+    case SIGNAL_NO_ENTRY: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "no entry");
+      break;
+    }
+
+    case SIGNAL_LOCKED: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "locked");
+      break;
+    }
+
+    case SIGNAL_ERROR_LOCKING: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "error locking");
+      break;
+    }
+
+    case SIGNAL_ERROR_OPENING: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "error opening");
+      break;
+    }
+
+    case SIGNAL_CLOSE_TIMEOUT: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "close timeout");
+      break;
+    }
+
+    case SIGNAL_WAIT_FOR_DOOR_CLOSED: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "wait for door closed");
+      break;
+    }
+
+    case SIGNAL_DOOR_MANUALLY_UNLOCKED: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "door manually unlocked");
+      break;
+    }
+
+    case SIGNAL_DOOR_MANUALLY_LOCKED: {
+      log_print(LSS_LOGIC, LL_VERBOSE, "received state machine signal: %s", "door manually locked");
+      break;
+    }
+
   }
 }
 
@@ -688,15 +736,15 @@ static void statemachine_handle_setTimeout(struct StateMachine *sm, uint32_t ms)
 {
   (void)sm;
   if(ms == 0) {
-    fprintf(stderr, "received state machine timeout cancel request\n");
+    log_print(LSS_LOGIC, LL_VERBOSE, "received state machine timeout cancel request");
     if(!disarm_timer(sm_timeout_fd)) {
-      fprintf(stderr, "failed to disarm timerfd. state machine will receive unwanted EVENT_TIMEOUT!\n");
+      log_print(LSS_LOGIC, LL_ERROR, "failed to disarm timerfd. state machine will receive unwanted EVENT_TIMEOUT!");
     }
   }
   else {
-    fprintf(stderr, "received state machine timeout request: %u ms\n", ms);
+    log_print(LSS_LOGIC, LL_VERBOSE, "received state machine timeout request: %u ms", ms);
     if(!arm_timer(sm_timeout_fd, true, ms)) {
-      fprintf(stderr, "failed to arm timerfd. state machine will not receive requested EVENT_TIMEOUT!\n");
+      log_print(LSS_LOGIC, LL_ERROR, "failed to arm timerfd. state machine will not receive requested EVENT_TIMEOUT!");
     }
   }
 }
@@ -707,14 +755,14 @@ void statemachine_handle_setIo(struct StateMachine *sm, enum PortalIo io, bool s
   switch(io) {
     case IO_TRIGGER_CLOSE: {
       if(!gpio_write(gpio.trigger_close, state)) {
-        fprintf(stderr, "failed to write GPIO pin 'trigger open' from state machine. this is bad.\n");
+        log_print(LSS_GPIO, LL_ERROR, "failed to write GPIO pin 'trigger open' from state machine. this is bad.");
       }
       break;
     }
     
     case IO_TRIGGER_OPEN: {
       if(!gpio_write(gpio.trigger_open, state)) {
-        fprintf(stderr, "failed to write GPIO pin 'trigger open' from state machine. this is bad.\n");
+        log_print(LSS_GPIO, LL_ERROR, "failed to write GPIO pin 'trigger open' from state machine. this is bad.");
       }
       break;
     }
@@ -757,12 +805,12 @@ static bool try_connect_mqtt()
   }
 
   if(!mqtt_client_publish(mqtt_client, "system/demo", "Hello, World!", 2)) {
-    fprintf(stderr, "failed to publish message to mqtt server.\n");
+    log_print(LSS_MQTT, LL_ERROR, "failed to publish message to mqtt server.");
     return false;
   }
   
   if(!mqtt_client_subscribe(mqtt_client, "#")) {
-    fprintf(stderr, "failed to subscribe to topic '#' on mqtt server.\n");
+    log_print(LSS_MQTT, LL_ERROR, "failed to subscribe to topic '#' on mqtt server.");
     return false;
   }
 
@@ -776,7 +824,7 @@ static bool install_signal_handlers()
     .sa_flags = SA_SIGINFO,
   };
   if(sigaction(SIGINT, &sigint_action, NULL) == -1) {
-    perror("failed to set SIGINT handler");
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to set SIGINT handler");
     return false;
   }
 
@@ -785,7 +833,7 @@ static bool install_signal_handlers()
     .sa_flags = SA_SIGINFO,
   };
   if(sigaction(SIGTERM, &sigterm_action, NULL) == -1) {
-    perror("failed to set SIGTERM handler");
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to set SIGTERM handler");
     return false;
   }
 
@@ -807,14 +855,14 @@ static int create_reconnect_timeout_timer(int secs)
 
   int timer = timerfd_create(CLOCK_MONOTONIC, 0);
   if(timer == -1) {
-    perror("failed to create timerfd");
-    fprintf(stderr, "destroying daemon, hoping for restart...\n");
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to create timerfd");
+    log_print(LSS_SYSTEM, LL_ERROR, "destroying daemon, hoping for restart...");
     exit(EXIT_FAILURE);
   }
 
   if(timerfd_settime(timer, 0, &restart_timeout, NULL) == -1) {
-    perror("failed to arm timerfd");
-    fprintf(stderr, "destroying daemon, hoping for restart...\n");
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to arm timerfd");
+    log_print(LSS_SYSTEM, LL_ERROR, "destroying daemon, hoping for restart...");
     exit(EXIT_FAILURE);
   }
 
@@ -850,8 +898,8 @@ static bool configure_timerfd(int timer, bool oneshot, uint32_t ms)
   }
 
   if(timerfd_settime(timer, 0, &timeout, NULL) == -1) {
-    perror("failed to arm timerfd");
-    fprintf(stderr, "destroying daemon, hoping for restart...\n");
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to arm timerfd");
+    log_print(LSS_SYSTEM, LL_ERROR, "destroying daemon, hoping for restart...");
     exit(EXIT_FAILURE);
   }
 
@@ -872,7 +920,7 @@ static bool arm_timer(int timer, bool oneshot, uint32_t ms)
 
 static size_t add_ipc_client(int fd) {
   if(pollfds_size >= POLLFD_LIMIT) {
-    fprintf(stderr, "cannot accept ipc client: too many ipc connections!\n");
+    log_print(LSS_IPC, LL_WARNING, "cannot accept ipc client: too many ipc connections!");
     return INVALID_IPC_CLIENT;
   }
 
@@ -894,7 +942,7 @@ static void remove_ipc_client(size_t index) {
 
   // close the socket when we remove a client connection
   if(close(pollfds[index].fd) == -1) {
-    perror("failed to close ipc client");
+    log_perror(LSS_IPC, LL_ERROR, "failed to close ipc client");
   }
 
   // swap-remove with the last index
@@ -908,12 +956,12 @@ static void remove_ipc_client(size_t index) {
 
 static void close_ipc_sock() {
   if(close(ipc_sock) == -1) {
-    perror("failed to close ipc socket properly");
+    log_perror(LSS_IPC, LL_WARNING, "failed to close ipc socket properly");
   }
   ipc_sock = -1;
 
   if(unlink(ipc_socket_address.sun_path) == -1) {
-    perror("failed to delete socket handle");
+    log_perror(LSS_IPC, LL_ERROR, "failed to delete socket handle");
   }
 }
 
@@ -959,7 +1007,7 @@ static void close_all_gpios(void)
 static void close_sm_timeout_fd(void)
 {
   if(close(sm_timeout_fd) == -1) {
-    perror("failed to close timeout fd");
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to close timeout fd");
   }
   sm_timeout_fd = -1;
 }
@@ -969,7 +1017,7 @@ static bool fetch_timer_fd(int fd)
   uint64_t counter;
   int res = read(fd, &counter, sizeof counter);
   if(res == -1) {
-    perror("failed to read from timerfd");
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to read from timerfd");
     return false;
   }
   return true;

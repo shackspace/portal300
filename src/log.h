@@ -1,0 +1,35 @@
+#ifndef PORTAL300_LOG_H
+#define PORTAL300_LOG_H
+
+#include <stdbool.h>
+
+enum LogLevel {
+  LL_ERROR = 0,
+  LL_WARNING = 1,
+  LL_MESSAGE = 2,
+  LL_VERBOSE = 3,
+};
+
+enum LogSubSystem {
+  LSS_GENERIC,
+  LSS_MQTT,
+  LSS_LOGIC,
+  LSS_GPIO,
+  LSS_SYSTEM,
+  LSS_IPC,
+};
+
+extern enum LogLevel log_level;
+
+bool log_init(void);
+void log_deinit(void);
+
+void log_write(enum LogSubSystem subsystem, enum LogLevel level,
+               char const *msg);
+void log_print(enum LogSubSystem subsystem, enum LogLevel level,
+               char const *fmt, ...) __attribute__((format(printf, 3, 4)));
+
+void log_perror(enum LogSubSystem subsystem, enum LogLevel level,
+               char const *msg);
+
+#endif
