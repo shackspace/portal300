@@ -14,6 +14,6 @@ openssl genrsa -out "$2.key" 2048
 
 openssl req -new -out "$2.csr" -key "$2.key" -config "${SCRIPT_ROOT}/client-info.cfg"
 
-openssl x509 -req -in "$2.csr" -CA "$1.crt" -CAkey "$1.key" -CAcreateserial -out "$2.crt" -days 360
+openssl x509 -req -in "$2.csr" -CA "$1.crt" -CAkey "$1.key" -CAcreateserial -out "$2.crt" -days 365
 
 rm "$2.csr"

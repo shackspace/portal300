@@ -22,7 +22,7 @@ struct MqttClient {
 };
 
 //! Initializes the MQTT library
-bool mqtt_client_init();
+bool mqtt_client_init(void);
 
 //! Creates a new MQTT client that can be used to connect to the portal MQT
 //! broker. Does not automatically connect!

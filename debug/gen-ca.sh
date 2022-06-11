@@ -12,4 +12,4 @@ fi
 # Generate key pair for CA
 openssl genrsa -out "$1.key" 2048
 
-openssl req -new -x509 -config "${SCRIPT_ROOT}/ca-info.cfg" -days 356 -key "$1.key" -out "$1.crt"
+openssl req -new -x509 -config "${SCRIPT_ROOT}/ca-info.cfg" -days 365 -key "$1.key" -out "$1.crt"

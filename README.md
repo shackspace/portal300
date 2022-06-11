@@ -36,13 +36,17 @@ The core logic for a portal device. Handles:
 
 ## Building
 
-Requirements:
+General Requirements:
 
 - GNU `make`
 - `gcc`
 - `ar`
 - `libssl-dev`
-- `libcrypto-dev`
+
+Additional packages that need to be installed for Raspbian OS besides the default ones:
+
+- `git`
+- `libssl-dev`
 
 ```sh-session
 [user@host portal300]$ make -B
@@ -88,7 +92,5 @@ This section contains a list of recognized fault vectors that can bring portal a
 The daemon initializes itself and falls into a large endless loop which receives all application relevant events via `poll`.
 This allows us to handle everything asynchronously without multithreading and react to events in a low time. It also saves energy
 for when no communication happens.
-
-
 
 ### Trigger

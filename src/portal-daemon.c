@@ -1,6 +1,7 @@
 
 #include "ipc.h"
 #include "mqtt-client.h"
+#include "state-machine.h"
 
 #include <bits/types/struct_itimerspec.h>
 #include <getopt.h>
@@ -25,7 +26,20 @@
 #include <gpio.h>
 #include <mqtt.h>
 
+
+// Configuration:
+
 #define MQTT_RECONNECT_TIMEOUT 5 // seconds
+
+// #define PORTAL_GPIO_CHIP "/dev/gpiochip0"
+#define PORTAL_GPIO_LOCKED          4 // GPIO  4, Wiring 8, Pin 3
+#define PORTAL_GPIO_CLOSED         22 // GPIO 22, Wiring 3, Pin 15
+#define PORTAL_GPIO_BUTTON          9 // GPIO  9, Wiring 13, Pin 21
+#define PORTAL_GPIO_TRIGGER_CLOSE  13 // GPIO 13, Wiring 23, Pin 33
+#define PORTAL_GPIO_TRIGGER_OPEN   19 // GPIO 19, Wiring 24, Pin 35
+#define PORTAL_GPIO_ACUSTIC_SIGNAL 26 // GPIO 26, Wiring 25, Pin 37
+
+// Globals:
 
 static volatile sig_atomic_t shutdown_requested = 0;
 
@@ -35,14 +49,17 @@ static struct MqttClient * mqtt_client = NULL;
 
 #define POLLFD_IPC          0 // well defined fd, always the unix socket for IPC 
 #define POLLFD_MQTT         1 // well defined fd, either the timerfd for reconnecting MQTT or the socket for MQTT communications
-#define POLLFD_GPIO_LOCKED  2 // well deifned fd, polls for inputs
-#define POLLFD_GPIO_CLOSED  3 // well deifned fd, polls for inputs
-#define POLLFD_GPIO_BUTTON  4 // well deifned fd, polls for inputs
-#define POLLFD_FIRST_IPC    5 // First ipc client socket slot
+#define POLLFD_GPIO_LOCKED  2 // well defined fd, polls for inputs
+#define POLLFD_GPIO_CLOSED  3 // well defined fd, polls for inputs
+#define POLLFD_GPIO_BUTTON  4 // well defined fd, polls for inputs
+#define POLLFD_SM_TIMEOUT   5 // well defined fd, is a timerfd that will trigger when the state machine should receive a timeout
+#define POLLFD_FIRST_IPC    6 // First ipc client socket slot
 #define POLLFD_LIMIT       32 // number of maximum socket connections
 
 static struct pollfd pollfds[POLLFD_LIMIT];
 static size_t pollfds_size = 2;
+
+static int sm_timeout_fd = -1;
 
 static const size_t INVALID_IPC_CLIENT = ~0U;
 
@@ -54,8 +71,9 @@ struct CliOptions {
   char const * client_crt_file;
 };
 
-static void close_ipc_sock();
-static void close_mqtt_client();
+static void close_ipc_sock(void);
+static void close_mqtt_client(void);
+static void close_sm_timeout_fd(void);
 
 static void sigint_handler(int sig, siginfo_t *info, void *ucontext);
 static void sigterm_handler(int sig, siginfo_t *info, void *ucontext);
@@ -63,9 +81,9 @@ static void sigterm_handler(int sig, siginfo_t *info, void *ucontext);
 static size_t add_ipc_client(int fd);
 static void remove_ipc_client(size_t index);
 
-static bool try_connect_mqtt();
-static bool install_signal_handlers();
-static int create_timeout_timer(int secs);
+static bool try_connect_mqtt(void);
+static bool install_signal_handlers(void);
+static int create_reconnect_timeout_timer(int secs);
 
 static bool send_ipc_info(int fd, char const * text);
 static bool send_ipc_infof(int fd, char const * fmt, ...) __attribute__ ((format (printf, 2, 3)));
@@ -92,17 +110,24 @@ static struct GpioDefs gpio = {
   .acustic_signal = NULL,
 };
 
-#define PORTAL_GPIO_CHIP "/dev/gpiochip0"
-#define PORTAL_GPIO_LOCKED 1
-#define PORTAL_GPIO_CLOSED 2
-#define PORTAL_GPIO_BUTTON 3
-#define PORTAL_GPIO_TRIGGER_CLOSE 4
-#define PORTAL_GPIO_TRIGGER_OPEN 5
-#define PORTAL_GPIO_ACUSTIC_SIGNAL 6
-
 static bool create_and_open_gpio(gpio_t ** gpio, struct gpio_config const * config, int identifier);
 
-static void close_all_gpios();
+static void close_all_gpios(void);
+
+static bool set_gpio(gpio_t * gpio, bool value);
+
+static bool get_gpio(gpio_t * pin, bool * state);
+
+static void statemachine_handle_signal(struct StateMachine *sm, enum PortalSignal signal);
+static void statemachine_handle_setTimeout(struct StateMachine *sm, uint32_t ms);
+
+static bool update_state_machine_io(struct StateMachine * sm);
+
+static bool fetch_timer_fd(int fd);
+
+static bool disarm_timer(int timer);
+static bool arm_timer(int timer, bool oneshot, uint32_t ms);
+
 
 int main(int argc, char **argv) {
   // Initialize libraries and dependencies:
@@ -111,6 +136,13 @@ int main(int argc, char **argv) {
     fprintf(stderr, "failed to install signal handlers.\n");
     exit(EXIT_FAILURE);
   }
+
+  sm_timeout_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+  if(sm_timeout_fd == -1) {
+    perror("failed to create sm_timeout_fd");
+    return EXIT_FAILURE;
+  }
+  atexit(close_sm_timeout_fd);
 
   if(!mqtt_client_init()) {
     fprintf(stderr, "failed to initialize mqtt client library. aborting.\n");
@@ -246,7 +278,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "failed to connect to mqtt server, retrying in %d seconds\n", MQTT_RECONNECT_TIMEOUT);
 
     // we failed to connect to MQTT, set up a timerfd to retry in some seconds
-    int timer = create_timeout_timer(MQTT_RECONNECT_TIMEOUT);
+    int timer = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
  
     pollfds[POLLFD_MQTT] = (struct pollfd) {
       .fd = timer,
@@ -274,6 +306,22 @@ int main(int argc, char **argv) {
       .revents = 0,
     };
   }
+
+  struct StateMachine portal_state;
+
+  sm_init(&portal_state, statemachine_handle_signal, statemachine_handle_setTimeout, NULL);
+  
+  if(!update_state_machine_io(&portal_state)) {
+    fprintf(stderr, "failed to get initial state of GPIO pins!\n");
+    return EXIT_FAILURE;
+  }
+
+
+  // TODO: Implement state machine interaction
+
+  set_gpio(gpio.acustic_signal, 0);
+  set_gpio(gpio.trigger_close, 0);
+  set_gpio(gpio.trigger_open, 1);
 
   while(shutdown_requested == false) {
     int const poll_ret = poll(pollfds, pollfds_size, -1); // wait infinitly for an event
@@ -326,7 +374,7 @@ int main(int argc, char **argv) {
                 }
                 else {
                   fprintf(stderr, "Lost connection to MQTT, reconnecting in %d seconds...\n", MQTT_RECONNECT_TIMEOUT);
-                  pollfds[i].fd = create_timeout_timer(MQTT_RECONNECT_TIMEOUT);
+                  pollfds[i].fd = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
                 }
               }
             }
@@ -339,7 +387,7 @@ int main(int argc, char **argv) {
                 exit(EXIT_FAILURE);
               }
 
-              if(try_connect_mqtt(mqtt_client)) {
+              if(try_connect_mqtt()) {
                 fprintf(stderr, "successfully reconnected to mqtt server.\n");
 
                 if(close(pfd.fd) == -1) {
@@ -359,8 +407,48 @@ int main(int argc, char **argv) {
           case POLLFD_GPIO_LOCKED:
           case POLLFD_GPIO_CLOSED:
           case POLLFD_GPIO_BUTTON: {
+
+            if(!update_state_machine_io(&portal_state)) {
+              fprintf(stderr, "failed to get initial state of GPIO pins!\n");
+              return EXIT_FAILURE;
+            }
+
+            bool button_state;
+            if(get_gpio(gpio.button, &button_state)) {
+              fprintf(stderr, "button = %s\n", button_state ? "pressed" : "released");
+            }
+            else {
+              fprintf(stderr, "failed to query button state\n");
+            }
+
+            break;
+          }
+
+          // StateMachine requested timeout arrived, forward it. 
+          case POLLFD_SM_TIMEOUT: {
             
-            // 
+            if(!fetch_timer_fd(sm_timeout_fd)) {
+              fprintf(stderr, "failed to fetch data from state machine.\n"); 
+            }
+
+            enum PortalError err = sm_send_event(&portal_state, EVENT_TIMEOUT);
+            switch(err) {
+              // good case:
+              case SM_SUCCESS: {
+                break;
+              }
+
+              // this should not happen, log it when it does
+              case SM_ERR_IN_PROGRESS: {
+                fprintf(stderr, "unexpected error from sm_send_event(EVENT_TIMEOUT): in progress.\n"); 
+                break;
+              }
+              
+              case SM_ERR_UNEXPECTED: {
+                fprintf(stderr, "timerfd triggered while state machine did not expect a EVENT_TIMEOUT. Did some race condition happen?\n"); 
+                break;
+              }
+            }
 
             break;
           }
@@ -416,7 +504,7 @@ int main(int argc, char **argv) {
                       (void)send_ipc_infof(pfd.fd, "Portal-Status:");
                       (void)send_ipc_infof(pfd.fd, "  Aktivität:     %s", "???"); // idle, öffnen, schließen
                       (void)send_ipc_infof(pfd.fd, "  MQTT:          %s",  mqtt_client_is_connected(mqtt_client) ? "Verbunden" : "Nicht verbunden");
-                      (void)send_ipc_infof(pfd.fd, "  IPC Clients:   %lu", pollfds_size - POLLFD_FIRST_IPC);
+                      (void)send_ipc_infof(pfd.fd, "  IPC Clients:   %zu", pollfds_size - POLLFD_FIRST_IPC);
                       (void)send_ipc_infof(pfd.fd, "  Schließbolzen: %s", "???"); // geöffnet, geschlossen
                       (void)send_ipc_infof(pfd.fd, "  Türsensor:     %s", "???"); // geöffnet, geschlossen
                       (void)send_ipc_info(pfd.fd, "");
@@ -478,6 +566,58 @@ int main(int argc, char **argv) {
 
   return EXIT_SUCCESS;
 }
+
+static bool update_state_machine_io(struct StateMachine * sm)
+{
+  assert(sm != NULL); 
+  
+  bool closed, locked;
+  if(!get_gpio(gpio.closed, &closed)) {
+    fprintf(stderr, "failed to query gpio.closed\n");
+    return false;
+  }
+  if(!get_gpio(gpio.locked, &locked)) {
+    fprintf(stderr, "failed to query gpio.locked\n");
+    return false;
+  }
+
+  enum DoorState state = sm_compute_state(locked, !closed);
+  sm_change_door_state(sm, state);
+  return true;
+}
+
+static void statemachine_handle_signal(struct StateMachine *sm, enum PortalSignal signal)
+{
+  (void)sm;
+  switch(signal) {
+    case SIGNAL_OPENING: fprintf(stderr, "received state machine signal: %s\n", "opening"); break;
+    case SIGNAL_LOCKING: fprintf(stderr, "received state machine signal: %s\n", "locking"); break;
+    case SIGNAL_UNLOCKED: fprintf(stderr, "received state machine signal: %s\n", "unlocked"); break;
+    case SIGNAL_OPENED: fprintf(stderr, "received state machine signal: %s\n", "opened"); break;
+    case SIGNAL_NO_ENTRY: fprintf(stderr, "received state machine signal: %s\n", "no entry"); break;
+    case SIGNAL_LOCKED: fprintf(stderr, "received state machine signal: %s\n", "locked"); break;
+    case SIGNAL_ERROR_LOCKING: fprintf(stderr, "received state machine signal: %s\n", "error locking"); break;
+    case SIGNAL_ERROR_OPENING: fprintf(stderr, "received state machine signal: %s\n", "error opening"); break;
+  }
+}
+
+static void statemachine_handle_setTimeout(struct StateMachine *sm, uint32_t ms)
+{
+  (void)sm;
+  if(ms == 0) {
+    fprintf(stderr, "received state machine timeout cancel request\n");
+    if(!disarm_timer(sm_timeout_fd)) {
+      fprintf(stderr, "failed to disarm timerfd. state machine will receive unwanted EVENT_TIMEOUT!\n");
+    }
+  }
+  else {
+    fprintf(stderr, "received state machine timeout request: %u ms\n", ms);
+    if(!arm_timer(sm_timeout_fd, true, ms)) {
+      fprintf(stderr, "failed to arm timerfd. state machine will not receive requested EVENT_TIMEOUT!\n");
+    }
+  }
+}
+
 
 static bool send_ipc_info(int fd, char const * text)
 {
@@ -550,7 +690,7 @@ static bool install_signal_handlers()
   return true;
 }
 
-static int create_timeout_timer(int secs)
+static int create_reconnect_timeout_timer(int secs)
 {
   const struct itimerspec restart_timeout = {
     .it_value = {
@@ -577,6 +717,55 @@ static int create_timeout_timer(int secs)
   }
 
   return timer;
+}
+
+static bool configure_timerfd(int timer, bool oneshot, uint32_t ms)
+{
+  assert(timer != -1);
+
+  const struct timespec given_ms = {
+    .tv_sec = ms / 1000 ,
+    .tv_nsec = 1000000 * (ms % 1000),
+  };
+
+  const struct timespec null_time = {
+    .tv_sec = 0,
+    .tv_nsec = 0,
+  };
+  
+  struct itimerspec timeout;
+  if(oneshot) {
+    timeout = (struct itimerspec) {
+      .it_value = given_ms,
+      .it_interval = null_time,
+    };
+  }
+  else {
+    timeout = (struct itimerspec) {
+      .it_value = given_ms,
+      .it_interval = given_ms,
+    };
+  }
+
+  if(timerfd_settime(timer, 0, &timeout, NULL) == -1) {
+    perror("failed to arm timerfd");
+    fprintf(stderr, "destroying daemon, hoping for restart...\n");
+    exit(EXIT_FAILURE);
+  }
+
+  return timer;
+}
+
+static bool disarm_timer(int timer) 
+{
+  return configure_timerfd(timer, false, 0);
+}
+
+
+static bool arm_timer(int timer, bool oneshot, uint32_t ms)
+{
+  assert(ms > 0);
+  return configure_timerfd(timer, oneshot, ms);
 }
 
 static size_t add_ipc_client(int fd) {
@@ -658,17 +847,52 @@ static bool create_and_open_gpio(gpio_t ** pin, struct gpio_config const * confi
     return false;
   }
 
+#ifdef PORTAL_GPIO_CHIP
   enum gpio_error_code err = gpio_open_advanced(*pin, PORTAL_GPIO_CHIP, identifier, config);
   if(err != 0) {
     fprintf(stderr, "failed to open gpio: %s\n", gpio_errmsg(*pin));
     gpio_free(*pin);
     return false;
   }
+#else
+  enum gpio_error_code err = gpio_open_sysfs(*pin, identifier, config->direction);
+  if(err != 0) {
+    fprintf(stderr, "failed to open gpio: %s\n", gpio_errmsg(*pin));
+    gpio_free(*pin);
+    return false;
+  }
+#endif
 
   return true;
 }
 
-static void close_all_gpios()
+static bool set_gpio(gpio_t * pin, bool value)
+{
+  assert(pin != NULL);
+
+  enum gpio_error_code err = gpio_write(pin, value);
+  if(err != 0) {
+    fprintf(stderr, "failed to write gpio: %s\n", gpio_errmsg(pin));
+    return false;
+  }
+
+  return true;
+}
+
+static bool get_gpio(gpio_t * pin, bool * state)
+{
+  assert(pin != NULL);
+
+  enum gpio_error_code err = gpio_read(pin, state);
+  if(err != 0) {
+    fprintf(stderr, "failed to write gpio: %s\n", gpio_errmsg(pin));
+    return false;
+  }
+
+  return true;
+}
+
+static void close_all_gpios(void)
 {
   if(gpio.locked != NULL) free(gpio.locked);
   if(gpio.closed != NULL) free(gpio.closed);
@@ -676,4 +900,23 @@ static void close_all_gpios()
   if(gpio.trigger_close != NULL) free(gpio.trigger_close);
   if(gpio.trigger_open != NULL) free(gpio.trigger_open);
   if(gpio.acustic_signal != NULL) free(gpio.acustic_signal);
+}
+
+static void close_sm_timeout_fd(void)
+{
+  if(close(sm_timeout_fd) == -1) {
+    perror("failed to close timeout fd");
+  }
+  sm_timeout_fd = -1;
+}
+
+static bool fetch_timer_fd(int fd)
+{
+  uint64_t counter;
+  int res = read(fd, &counter, sizeof counter);
+  if(res == -1) {
+    perror("failed to read from timerfd");
+    return false;
+  }
+  return true;
 }

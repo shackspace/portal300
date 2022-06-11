@@ -1,11 +1,10 @@
-
 CC=gcc
 LD=gcc
 AR=ar
 
 CFLAGS=-DMQTTC_PAL_FILE=portal_mqtt_pal.h -Isrc
 CFLAGS_LIB=$(CFLAGS)
-CFLAGS_APP=$(CFLAGS) -pedantic -Wall -Wextra -Werror=format -Werror=shadow -Werror=return-type -Werror=unused-parameter -I vendor/mqtt-c/include -I vendor/c-periphery/src 
+CFLAGS_APP=$(CFLAGS) -pedantic -Wall -Wextra -Werror=missing-prototypes -Werror=strict-prototypes -Werror=format -Werror=shadow -Werror=return-type -Werror=unused-parameter -I vendor/mqtt-c/include -I vendor/c-periphery/src 
 LFLAGS=
 
 DAEMON_LIBS=ssl crypto pthread
@@ -13,7 +12,7 @@ TRIGGER_LIBS=
 
 all: bin/portal-daemon bin/portal-trigger
 
-bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/periphery.a obj/mqtt.a
+bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/periphery.a obj/mqtt.a obj/state-machine.o
 	$(LD) $(LFLAGS) -o "$@" $^ $(addprefix -l ,$(DAEMON_LIBS))
 
 bin/portal-trigger: obj/portal-trigger.o obj/ipc.o

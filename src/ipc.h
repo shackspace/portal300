@@ -46,7 +46,7 @@ extern const struct sockaddr_un ipc_socket_address;
 
 //! Creates a new IPC socket that has the right configuration for IPC.
 //! Returns -1 on error, otherwise a file handle.
-int ipc_create_socket();
+int ipc_create_socket(void);
 
 //! Sends an ipc message via the given socket
 //! returns true on success.
