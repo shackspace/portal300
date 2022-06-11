@@ -39,6 +39,26 @@
 
 // Globals:
 
+struct CliOptions {
+  char const * host_name;
+  int port;
+  char const * ca_cert_file;
+  char const * client_key_file;
+  char const * client_crt_file;
+};
+
+struct GpioDefs {
+  // inputs
+  struct GpioPin locked;
+  struct GpioPin closed;
+  struct GpioPin button;
+
+  // outputs:
+  struct GpioPin trigger_close; 
+  struct GpioPin trigger_open;  
+  struct GpioPin acustic_signal;
+};
+
 static volatile sig_atomic_t shutdown_requested = 0;
 
 static int ipc_sock = -1;
@@ -64,13 +84,9 @@ static int sm_timeout_fd = -1;
 //! Index of an invalid IPC client
 static const size_t INVALID_IPC_CLIENT = ~0U;
 
-struct CliOptions {
-  char const * host_name;
-  int port;
-  char const * ca_cert_file;
-  char const * client_key_file;
-  char const * client_crt_file;
-};
+struct GpioHandle gpio_core;
+
+static struct GpioDefs gpio = {0};
 
 static void close_ipc_sock(void);
 static void close_mqtt_client(void);
@@ -89,28 +105,13 @@ static int create_reconnect_timeout_timer(int secs);
 static bool send_ipc_info(int fd, char const * text);
 static bool send_ipc_infof(int fd, char const * fmt, ...) __attribute__ ((format (printf, 2, 3)));
 
-struct GpioHandle gpio_core;
-
-struct GpioDefs {
-  // inputs
-  struct GpioPin locked;
-  struct GpioPin closed;
-  struct GpioPin button;
-
-  // outputs:
-  struct GpioPin trigger_close; 
-  struct GpioPin trigger_open;  
-  struct GpioPin acustic_signal;
-};
-
-static struct GpioDefs gpio = {0};
-
 static bool create_and_open_gpio(struct GpioPin * gpio, struct GpioConfig config, char const * label, int identifier);
 
 static void close_all_gpios(void);
 
 static void statemachine_handle_signal(struct StateMachine *sm, enum PortalSignal signal);
 static void statemachine_handle_setTimeout(struct StateMachine *sm, uint32_t ms);
+static void statemachine_handle_setIo(struct StateMachine *sm, enum PortalIo io, bool state);
 
 static bool update_state_machine_io(struct StateMachine * sm);
 
@@ -118,6 +119,8 @@ static bool fetch_timer_fd(int fd);
 
 static bool disarm_timer(int timer);
 static bool arm_timer(int timer, bool oneshot, uint32_t ms);
+
+static enum DoorState fetch_door_state(void);
 
 int main(int argc, char **argv) {
   // Initialize libraries and dependencies:
@@ -133,6 +136,12 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   atexit(close_sm_timeout_fd);
+
+  pollfds[POLLFD_SM_TIMEOUT] = (struct pollfd) {
+    .fd = sm_timeout_fd,
+    .events = POLLIN,
+    .revents = 0,
+  };
 
   if(!mqtt_client_init()) {
     fprintf(stderr, "failed to initialize mqtt client library. aborting.\n");
@@ -232,7 +241,7 @@ int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
   struct CliOptions const cli = {
-    .host_name = "localhost",
+    .host_name = "mqtt.portal",
     .port = 8883,
     .ca_cert_file = "debug/ca.crt",
     .client_key_file = "debug/client.key",
@@ -301,21 +310,21 @@ int main(int argc, char **argv) {
     };
   }
 
+  enum DoorState initial_door_state = fetch_door_state();
+
   struct StateMachine portal_state;
 
-  sm_init(&portal_state, statemachine_handle_signal, statemachine_handle_setTimeout, NULL);
+  sm_init(&portal_state, initial_door_state, statemachine_handle_signal, statemachine_handle_setTimeout, statemachine_handle_setIo, NULL);
   
   if(!update_state_machine_io(&portal_state)) {
     fprintf(stderr, "failed to get initial state of GPIO pins!\n");
     return EXIT_FAILURE;
   }
 
-
   // TODO: Implement state machine interaction
-
   gpio_write(gpio.acustic_signal, 0);
   gpio_write(gpio.trigger_close, 0);
-  gpio_write(gpio.trigger_open, 1);
+  gpio_write(gpio.trigger_open, 0);
 
   while(shutdown_requested == false) {
     int const poll_ret = poll(pollfds, pollfds_size, -1); // wait infinitly for an event
@@ -432,8 +441,8 @@ int main(int argc, char **argv) {
             bool button_state;
             if(gpio_read(gpio.button, &button_state)) {
 
-              fprintf(stderr, "button = %s\n", button_state ? "pressed" : "released");
-              
+              // fprintf(stderr, "button = %s\n", button_state ? "pressed" : "released");
+
               if(button_state) {
                 enum PortalError err = sm_send_event(&portal_state, EVENT_CLOSE);
                 if(err == SM_SUCCESS) {
@@ -629,11 +638,8 @@ int main(int argc, char **argv) {
   return EXIT_SUCCESS;
 }
 
-
-static bool update_state_machine_io(struct StateMachine * sm)
+static enum DoorState fetch_door_state()
 {
-  assert(sm != NULL); 
-  
   bool closed, locked;
   if(!gpio_read(gpio.closed, &closed)) {
     fprintf(stderr, "failed to query gpio.closed\n");
@@ -645,6 +651,15 @@ static bool update_state_machine_io(struct StateMachine * sm)
   }
 
   enum DoorState state = sm_compute_state(locked, !closed);
+
+  return state;
+}
+
+static bool update_state_machine_io(struct StateMachine * sm)
+{
+  assert(sm != NULL); 
+  
+  enum DoorState state = fetch_door_state();
   sm_change_door_state(sm, state);
 
   return true;
@@ -662,6 +677,10 @@ static void statemachine_handle_signal(struct StateMachine *sm, enum PortalSigna
     case SIGNAL_LOCKED: fprintf(stderr, "received state machine signal: %s\n", "locked"); break;
     case SIGNAL_ERROR_LOCKING: fprintf(stderr, "received state machine signal: %s\n", "error locking"); break;
     case SIGNAL_ERROR_OPENING: fprintf(stderr, "received state machine signal: %s\n", "error opening"); break;
+    case SIGNAL_CLOSE_TIMEOUT: fprintf(stderr, "received state machine signal: %s\n", "close timeout"); break;
+    case SIGNAL_WAIT_FOR_DOOR_CLOSED: fprintf(stderr, "received state machine signal: %s\n", "wait for door closed"); break;
+    case SIGNAL_DOOR_MANUALLY_UNLOCKED: fprintf(stderr, "received state machine signal: %s\n", "door manually unlocked"); break;
+    case SIGNAL_DOOR_MANUALLY_LOCKED: fprintf(stderr, "received state machine signal: %s\n", "door manually locked"); break;
   }
 }
 
@@ -682,6 +701,25 @@ static void statemachine_handle_setTimeout(struct StateMachine *sm, uint32_t ms)
   }
 }
 
+void statemachine_handle_setIo(struct StateMachine *sm, enum PortalIo io, bool state)
+{
+  (void)sm;
+  switch(io) {
+    case IO_TRIGGER_CLOSE: {
+      if(!gpio_write(gpio.trigger_close, state)) {
+        fprintf(stderr, "failed to write GPIO pin 'trigger open' from state machine. this is bad.\n");
+      }
+      break;
+    }
+    
+    case IO_TRIGGER_OPEN: {
+      if(!gpio_write(gpio.trigger_open, state)) {
+        fprintf(stderr, "failed to write GPIO pin 'trigger open' from state machine. this is bad.\n");
+      }
+      break;
+    }
+  }
+}
 
 static bool send_ipc_info(int fd, char const * text)
 {

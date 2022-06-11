@@ -47,6 +47,16 @@ enum PortalSignal {
   //! The door failed to remove the door bolt from the lock in a reasonable
   //! time.
   SIGNAL_ERROR_OPENING,
+
+  //! A door closing was requested, but the door wasn't closed. Portal status
+  //! unchanged.
+  SIGNAL_CLOSE_TIMEOUT,
+
+  //! The state machine is now waiting for the user to close the door.
+  SIGNAL_WAIT_FOR_DOOR_CLOSED,
+
+  SIGNAL_DOOR_MANUALLY_UNLOCKED,
+  SIGNAL_DOOR_MANUALLY_LOCKED,
 };
 
 enum PortalError {
@@ -61,11 +71,18 @@ enum PortalError {
   SM_ERR_UNEXPECTED = 2,
 };
 
+enum PortalIo {
+  IO_TRIGGER_OPEN,
+  IO_TRIGGER_CLOSE,
+};
+
 struct StateMachine;
 
 typedef void (*StateMachineSignal)(struct StateMachine *sm,
                                    enum PortalSignal signal);
 typedef void (*StateMachineSetTimeout)(struct StateMachine *sm, uint32_t ms);
+typedef void (*StateMachineSetIo)(struct StateMachine *sm, enum PortalIo io,
+                                  bool active);
 
 struct StateMachine {
   //! General purpose user data that can be used to obtain a external context
@@ -80,6 +97,9 @@ struct StateMachine {
   //! no `EVENT_TIMEOUT` should be sent anymore.
   StateMachineSetTimeout setTimeout;
 
+  //! The state machine requests change of an I/O pin.
+  StateMachineSetIo setIo;
+
   // internals:
   unsigned int door_state;
   unsigned int logic_state;
@@ -90,10 +110,13 @@ struct StateMachine {
 //!   changes to the user.
 //! - `setTimeout` is a mandatory callback that is used to request/cancel
 //!   `EVENT_TIMEOUT`.
+//! - `setIo` is a mandatory callback that is used to change I/O pins on the
+//!   portal.
 //! - `user_data` is an optional pointer to *anything*. This can be used in the
 //!   callbacks to obtain a well-known context from the state machine.
-void sm_init(struct StateMachine *sm, StateMachineSignal signal,
-             StateMachineSetTimeout setTimeout, void *user_data);
+void sm_init(struct StateMachine *sm, enum DoorState inital_state,
+             StateMachineSignal signal, StateMachineSetTimeout setTimeout,
+             StateMachineSetIo setIo, void *user_data);
 
 //! Notifies the state machine of a change in the door state.
 void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state);

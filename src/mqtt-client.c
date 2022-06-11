@@ -212,22 +212,11 @@ bool mqtt_client_connect(struct MqttClient *client)
     goto _error_deinit_ssl;
   }
 
-  struct sockaddr_in dest_addr = {
-    .sin_family = AF_INET,
-    .sin_port = htons(8883),
-    .sin_addr.s_addr = inet_addr("127.0.0.1"),
-  };
-
-  /* ---------------------------------------------------------- *
-   * Try to make the host connect here                          *
-   * ---------------------------------------------------------- */
-  if (connect(sockfd, (struct sockaddr *) &dest_addr, sizeof(struct sockaddr)) == -1 ) {
-    goto _error_deinit_socket;
-  }
-
   SSL_set_fd(ssl, sockfd);
-  
-  if(SSL_connect(ssl) != 1 ) {
+
+  int ssl_err;
+  if((ssl_err = SSL_connect(ssl)) != 1 ) {
+    fprintf(stderr, "failed to perform SSL handshake: %d\n", SSL_get_error(ssl, ssl_err));
     goto _error_deinit_socket;
   }
 
