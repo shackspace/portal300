@@ -1,7 +1,7 @@
-
 #include "ipc.h"
 #include "mqtt-client.h"
 #include "state-machine.h"
+#include "gpio.h"
 
 #include <bits/types/struct_itimerspec.h>
 #include <getopt.h>
@@ -23,15 +23,13 @@
 #include <assert.h>
 #include <time.h>
 
-#include <gpio.h>
 #include <mqtt.h>
-
 
 // Configuration:
 
 #define MQTT_RECONNECT_TIMEOUT 5 // seconds
 
-// #define PORTAL_GPIO_CHIP "/dev/gpiochip0"
+#define PORTAL_GPIO_CHIP "/dev/gpiochip0"
 #define PORTAL_GPIO_LOCKED          4 // GPIO  4, Wiring 8, Pin 3
 #define PORTAL_GPIO_CLOSED         22 // GPIO 22, Wiring 3, Pin 15
 #define PORTAL_GPIO_BUTTON          9 // GPIO  9, Wiring 13, Pin 21
@@ -56,11 +54,14 @@ static struct MqttClient * mqtt_client = NULL;
 #define POLLFD_FIRST_IPC    6 // First ipc client socket slot
 #define POLLFD_LIMIT       32 // number of maximum socket connections
 
+//! Stack array of pollfds. Everything below POLLFD_FIRST_IPC is pre-intialized and has a static purpose
+//! while everything at POLLFD_FIRST_IPC till POLLFD_LIMIT is a dynamic stack of pollfds for ipc client connections.
 static struct pollfd pollfds[POLLFD_LIMIT];
-static size_t pollfds_size = 2;
+static size_t pollfds_size = POLLFD_FIRST_IPC;
 
 static int sm_timeout_fd = -1;
 
+//! Index of an invalid IPC client
 static const size_t INVALID_IPC_CLIENT = ~0U;
 
 struct CliOptions {
@@ -88,35 +89,25 @@ static int create_reconnect_timeout_timer(int secs);
 static bool send_ipc_info(int fd, char const * text);
 static bool send_ipc_infof(int fd, char const * fmt, ...) __attribute__ ((format (printf, 2, 3)));
 
+struct GpioHandle gpio_core;
+
 struct GpioDefs {
   // inputs
-  gpio_t * locked;
-  gpio_t * closed;
-  gpio_t * button;
+  struct GpioPin locked;
+  struct GpioPin closed;
+  struct GpioPin button;
 
   // outputs:
-  gpio_t * trigger_close; 
-  gpio_t * trigger_open;  
-  gpio_t * acustic_signal;
+  struct GpioPin trigger_close; 
+  struct GpioPin trigger_open;  
+  struct GpioPin acustic_signal;
 };
 
-static struct GpioDefs gpio = {
-  .locked = NULL,
-  .closed = NULL,
-  .button = NULL,
+static struct GpioDefs gpio = {0};
 
-  .trigger_close = NULL,
-  .trigger_open = NULL,
-  .acustic_signal = NULL,
-};
-
-static bool create_and_open_gpio(gpio_t ** gpio, struct gpio_config const * config, int identifier);
+static bool create_and_open_gpio(struct GpioPin * gpio, struct GpioConfig config, char const * label, int identifier);
 
 static void close_all_gpios(void);
-
-static bool set_gpio(gpio_t * gpio, bool value);
-
-static bool get_gpio(gpio_t * pin, bool * state);
 
 static void statemachine_handle_signal(struct StateMachine *sm, enum PortalSignal signal);
 static void statemachine_handle_setTimeout(struct StateMachine *sm, uint32_t ms);
@@ -127,7 +118,6 @@ static bool fetch_timer_fd(int fd);
 
 static bool disarm_timer(int timer);
 static bool arm_timer(int timer, bool oneshot, uint32_t ms);
-
 
 int main(int argc, char **argv) {
   // Initialize libraries and dependencies:
@@ -151,95 +141,90 @@ int main(int argc, char **argv) {
 
   // create GPIO management types and open GPIOs
   {
-    static const struct gpio_config regular_input = {
+    if(!gpio_open(&gpio_core, PORTAL_GPIO_CHIP)) {
+      return EXIT_FAILURE;
+    }
+    atexit(close_all_gpios);
+
+
+    static const struct GpioConfig regular_input = {
       .direction = GPIO_DIR_IN,
       .edge = GPIO_EDGE_BOTH,
       .bias = GPIO_BIAS_PULL_UP,
       .drive = GPIO_DRIVE_DEFAULT,
-      .inverted = false,
-      .label = NULL,
+      .inverted = true,
+      .debounce_us = 1000, // 1ms debouncing
     };
-    static const struct gpio_config regular_output = {
+    static const struct GpioConfig regular_output = {
       .direction = GPIO_DIR_OUT,
       .edge = GPIO_EDGE_NONE,
       .bias = GPIO_BIAS_DEFAULT,
       .drive = GPIO_DRIVE_DEFAULT, // push pull
       .inverted = false,
-      .label = NULL,
     };
 
-    gpio = (struct GpioDefs) {
-      .locked = NULL,
-      .closed = NULL,
-      .button = NULL,
-      .trigger_close = NULL,
-      .trigger_open = NULL,
-      .acustic_signal = NULL,
-    };
-
-    atexit(close_all_gpios);
-    if(!create_and_open_gpio(&gpio.locked, &regular_input, PORTAL_GPIO_LOCKED)) {
+    if(!create_and_open_gpio(&gpio.locked, regular_input, "portal.locked", PORTAL_GPIO_LOCKED)) {
       fprintf(stderr, "failed to open gpio 'locked'.\n");
       return EXIT_FAILURE;
     }
-    if(!create_and_open_gpio(&gpio.closed, &regular_input, PORTAL_GPIO_CLOSED)) {
+    if(!create_and_open_gpio(&gpio.closed, regular_input, "portal.closed", PORTAL_GPIO_CLOSED)) {
       fprintf(stderr, "failed to open gpio 'closed'.\n");
       return EXIT_FAILURE;
     }
-    if(!create_and_open_gpio(&gpio.button, &regular_input, PORTAL_GPIO_BUTTON)) {
+    if(!create_and_open_gpio(&gpio.button, regular_input, "portal.button", PORTAL_GPIO_BUTTON)) {
       fprintf(stderr, "failed to open gpio 'button'.\n");
       return EXIT_FAILURE;
     }
-    if(!create_and_open_gpio(&gpio.trigger_close, &regular_output, PORTAL_GPIO_TRIGGER_CLOSE)) {
+    if(!create_and_open_gpio(&gpio.trigger_close, regular_output, "portal.trigger_close", PORTAL_GPIO_TRIGGER_CLOSE)) {
       fprintf(stderr, "failed to open gpio 'trigger_close'.\n");
       return EXIT_FAILURE;
     }
-    if(!create_and_open_gpio(&gpio.trigger_open, &regular_output, PORTAL_GPIO_TRIGGER_OPEN)) {
+    if(!create_and_open_gpio(&gpio.trigger_open, regular_output, "portal.trigger_open", PORTAL_GPIO_TRIGGER_OPEN)) {
       fprintf(stderr, "failed to open gpio 'trigger_open'.\n");
       return EXIT_FAILURE;
     }
-    if(!create_and_open_gpio(&gpio.acustic_signal, &regular_output, PORTAL_GPIO_ACUSTIC_SIGNAL)) {
+    if(!create_and_open_gpio(&gpio.acustic_signal, regular_output, "portal.acustic_signal", PORTAL_GPIO_ACUSTIC_SIGNAL)) {
       fprintf(stderr, "failed to open gpio 'acustic_signal'.\n");
       return EXIT_FAILURE;
     }
 
-    pollfds[PORTAL_GPIO_LOCKED] = (struct pollfd) {
+    pollfds[POLLFD_GPIO_LOCKED] = (struct pollfd) {
       .fd = gpio_fd(gpio.locked),
-      .events = POLLIN | POLLERR,
+      .events = POLLIN | POLLERR | POLLOUT,
       .revents = 0,
     };
-    if(pollfds[PORTAL_GPIO_LOCKED].fd == -1) {
+    if(pollfds[POLLFD_GPIO_LOCKED].fd == -1) {
       fprintf(stderr, "failed to get fd for gpio locked.\n");
       return EXIT_FAILURE;
     }
 
-    pollfds[PORTAL_GPIO_CLOSED] = (struct pollfd) {
+    pollfds[POLLFD_GPIO_CLOSED] = (struct pollfd) {
       .fd = gpio_fd(gpio.closed),
-      .events = POLLIN | POLLERR,
+      .events = POLLIN | POLLERR | POLLOUT,
       .revents = 0,
     };
-    if(pollfds[PORTAL_GPIO_CLOSED].fd == -1) {
+    if(pollfds[POLLFD_GPIO_CLOSED].fd == -1) {
       fprintf(stderr, "failed to get fd for gpio closed.\n");
       return EXIT_FAILURE;
     }
 
-    pollfds[PORTAL_GPIO_BUTTON] = (struct pollfd) {
+    pollfds[POLLFD_GPIO_BUTTON] = (struct pollfd) {
       .fd = gpio_fd(gpio.button),
-      .events = POLLIN | POLLERR,
+      .events = POLLIN | POLLERR | POLLOUT,
       .revents = 0,
     };
-    if(pollfds[PORTAL_GPIO_BUTTON].fd == -1) {
+    if(pollfds[POLLFD_GPIO_BUTTON].fd == -1) {
       fprintf(stderr, "failed to get fd for gpio button.\n");
       return EXIT_FAILURE;
     }
   }
 
-  if(gpio.locked == NULL
-     || gpio.closed == NULL 
-     || gpio.button == NULL 
-     || gpio.trigger_close == NULL 
-     || gpio.trigger_open == NULL 
-     || gpio.acustic_signal == NULL) {
+  if(gpio.locked.io == NULL
+     || gpio.closed.io == NULL 
+     || gpio.button.io == NULL 
+     || gpio.trigger_close.io == NULL 
+     || gpio.trigger_open.io == NULL 
+     || gpio.acustic_signal.io == NULL) {
     fprintf(stderr, "failed to create GPIO objects.\n");
     return EXIT_FAILURE;
   }
@@ -328,9 +313,9 @@ int main(int argc, char **argv) {
 
   // TODO: Implement state machine interaction
 
-  set_gpio(gpio.acustic_signal, 0);
-  set_gpio(gpio.trigger_close, 0);
-  set_gpio(gpio.trigger_open, 1);
+  gpio_write(gpio.acustic_signal, 0);
+  gpio_write(gpio.trigger_close, 0);
+  gpio_write(gpio.trigger_open, 1);
 
   while(shutdown_requested == false) {
     int const poll_ret = poll(pollfds, pollfds_size, -1); // wait infinitly for an event
@@ -417,13 +402,35 @@ int main(int argc, char **argv) {
           case POLLFD_GPIO_CLOSED:
           case POLLFD_GPIO_BUTTON: {
 
+
+            if(i == POLLFD_GPIO_LOCKED) {
+              enum GpioEdge edge;
+              if(!gpio_get_event(gpio.locked, &edge)) {
+                fprintf(stderr, "failed to read event for gpio locked\n");
+              }
+            }
+            if(i == POLLFD_GPIO_CLOSED) {
+              enum GpioEdge edge;
+              if(!gpio_get_event(gpio.closed, &edge)) {
+                fprintf(stderr, "failed to read event for gpio closed\n");
+              }
+            }
+            if(i == POLLFD_GPIO_BUTTON) {
+              enum GpioEdge edge;
+              if(!gpio_get_event(gpio.button, &edge)) {
+                fprintf(stderr, "failed to read event for gpio button\n");
+              }
+            }
+
+            fprintf(stderr, "io event. exciting!\n");
+
             if(!update_state_machine_io(&portal_state)) {
               fprintf(stderr, "failed to get initial state of GPIO pins!\n");
               return EXIT_FAILURE;
             }
 
             bool button_state;
-            if(get_gpio(gpio.button, &button_state)) {
+            if(gpio_read(gpio.button, &button_state)) {
               fprintf(stderr, "button = %s\n", button_state ? "pressed" : "released");
             }
             else {
@@ -581,11 +588,11 @@ static bool update_state_machine_io(struct StateMachine * sm)
   assert(sm != NULL); 
   
   bool closed, locked;
-  if(!get_gpio(gpio.closed, &closed)) {
+  if(!gpio_read(gpio.closed, &closed)) {
     fprintf(stderr, "failed to query gpio.closed\n");
     return false;
   }
-  if(!get_gpio(gpio.locked, &locked)) {
+  if(!gpio_read(gpio.locked, &locked)) {
     fprintf(stderr, "failed to query gpio.locked\n");
     return false;
   }
@@ -844,103 +851,23 @@ static void sigterm_handler(int sig, siginfo_t *info, void *ucontext) {
   shutdown_requested = 1;
 }
 
-
-
-static bool create_and_open_gpio(gpio_t ** pin, struct gpio_config const * config, int identifier)
+static bool create_and_open_gpio(struct GpioPin * pin, struct GpioConfig config, char const * label, int line)
 {
   assert(pin != NULL);
-  assert(config != NULL);
-  
-  *pin = gpio_new();
-  if(*pin == NULL) {
-    return false;
-  }
-
-#ifdef PORTAL_GPIO_CHIP
-  enum gpio_error_code err = gpio_open_advanced(*pin, PORTAL_GPIO_CHIP, identifier, config);
-  if(err != 0) {
-    fprintf(stderr, "failed to open gpio: %s\n", gpio_errmsg(*pin));
-    gpio_free(*pin);
-    *pin = NULL;
-    return false;
-  }
-#else
-  enum gpio_error_code err = gpio_open_sysfs(*pin, identifier, config->direction);
-  if(err != 0) {
-    fprintf(stderr, "failed to open gpio: %s\n", gpio_errmsg(*pin));
-    gpio_free(*pin);
-    *pin = NULL;
-    return false;
-  }
-
-  err = gpio_set_edge(*pin, config->edge);
-  if(err != 0) {
-    fprintf(stderr, "failed to set interrupt for gpio: %s\n", gpio_errmsg(*pin));
-    goto cleanup_io;
-  }
-
-  err = gpio_set_bias(*pin, config->bias);
-  if(err != 0) {
-    fprintf(stderr, "failed to set gpio bias: %s\n", gpio_errmsg(*pin));
-    goto cleanup_io;
-  }
-  
-  err = gpio_set_drive(*pin, config->drive);
-  if(err != 0) {
-    fprintf(stderr, "failed to set gpio drive: %s\n", gpio_errmsg(*pin));
-    goto cleanup_io;
-  }
-
-  err = gpio_set_inverted(*pin, config->inverted);
-  if(err != 0) {
-    fprintf(stderr, "failed to set gpio inverted: %s\n", gpio_errmsg(*pin));
-    goto cleanup_io;
-  }
-#endif
-
-  return true;
-#ifndef PORTAL_GPIO_CHIP
-cleanup_io:
-  gpio_free(*pin);
-  *pin = NULL;
-  return false;
-#endif
-}
-
-static bool set_gpio(gpio_t * pin, bool value)
-{
-  assert(pin != NULL);
-
-  enum gpio_error_code err = gpio_write(pin, value);
-  if(err != 0) {
-    fprintf(stderr, "failed to write gpio: %s\n", gpio_errmsg(pin));
-    return false;
-  }
-
-  return true;
-}
-
-static bool get_gpio(gpio_t * pin, bool * state)
-{
-  assert(pin != NULL);
-
-  enum gpio_error_code err = gpio_read(pin, state);
-  if(err != 0) {
-    fprintf(stderr, "failed to write gpio: %s\n", gpio_errmsg(pin));
-    return false;
-  }
-
-  return true;
+  assert(label != NULL);
+  strncpy(config.label, label, sizeof config.label);
+  return gpio_open_pin(&gpio_core, pin, config, line);
 }
 
 static void close_all_gpios(void)
 {
-  if(gpio.locked != NULL) free(gpio.locked);
-  if(gpio.closed != NULL) free(gpio.closed);
-  if(gpio.button != NULL) free(gpio.button);
-  if(gpio.trigger_close != NULL) free(gpio.trigger_close);
-  if(gpio.trigger_open != NULL) free(gpio.trigger_open);
-  if(gpio.acustic_signal != NULL) free(gpio.acustic_signal);
+  if(gpio.locked.io != NULL) gpio_close_pin(&gpio.locked);
+  if(gpio.closed.io != NULL) gpio_close_pin(&gpio.closed);
+  if(gpio.button.io != NULL) gpio_close_pin(&gpio.button);
+  if(gpio.trigger_close.io != NULL) gpio_close_pin(&gpio.trigger_close);
+  if(gpio.trigger_open.io != NULL) gpio_close_pin(&gpio.trigger_open);
+  if(gpio.acustic_signal.io != NULL) gpio_close_pin(&gpio.acustic_signal);
+  gpio_close(&gpio_core);
 }
 
 static void close_sm_timeout_fd(void)

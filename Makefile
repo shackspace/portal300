@@ -12,7 +12,7 @@ TRIGGER_LIBS=
 
 all: bin/portal-daemon bin/portal-trigger
 
-bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/periphery.a obj/mqtt.a obj/state-machine.o
+bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/mqtt.a obj/state-machine.o obj/gpio.o 
 	$(LD) $(LFLAGS) -o "$@" $^ $(addprefix -l ,$(DAEMON_LIBS))
 
 bin/portal-trigger: obj/portal-trigger.o obj/ipc.o
@@ -21,14 +21,6 @@ bin/portal-trigger: obj/portal-trigger.o obj/ipc.o
 # application object files
 obj/%.o: src/%.c
 	$(CC) $(CFLAGS_APP) -c -o "$@" $<
-
-# c-periphery library
-obj/periphery.a:  obj/periphery-gpio.o obj/periphery-led.o obj/periphery-pwm.o obj/periphery-spi.o obj/periphery-i2c.o obj/periphery-mmio.o obj/periphery-serial.o obj/periphery-version.o
-	$(AR) rcs "$@" $^
-
-# objects for c-periphery
-obj/periphery-%.o: vendor/c-periphery/src/%.c
-	$(CC) $(CFLAGS_LIB) -c -o "$@" $< -DPERIPHERY_GPIO_CDEV_SUPPORT
 
 # mqtt-c library
 obj/mqtt.a: obj/mqtt-mqtt.o obj/mqtt-mqtt_pal.o
