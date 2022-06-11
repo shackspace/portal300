@@ -39,6 +39,11 @@ static void close_ipc_socket(void);
 
 int main(int argc, char ** argv)
 {
+  if(!log_init()) {
+    fprintf(stderr, "failed to initialize logging.\n");
+    return EXIT_FAILURE;
+  }
+  
   struct PortalArgs cli;
   if(parse_cli(argc, argv, &cli) == false) {
     return EXIT_FAILURE;

@@ -19,10 +19,22 @@ enum LogSubSystem {
   LSS_IPC,
 };
 
+struct LogConsumer {
+  // configure:
+  void *user_data;
+  void (*log)(void * user_data, enum LogSubSystem subsystem, enum LogLevel level,
+              char const *msg);
+
+  // internal:
+  struct LogConsumer *next;
+};
+
 extern enum LogLevel log_level;
 
 bool log_init(void);
 void log_deinit(void);
+
+void log_register_consumer(struct LogConsumer *consumer);
 
 void log_write(enum LogSubSystem subsystem, enum LogLevel level,
                char const *msg);
@@ -30,6 +42,6 @@ void log_print(enum LogSubSystem subsystem, enum LogLevel level,
                char const *fmt, ...) __attribute__((format(printf, 3, 4)));
 
 void log_perror(enum LogSubSystem subsystem, enum LogLevel level,
-               char const *msg);
+                char const *msg);
 
 #endif

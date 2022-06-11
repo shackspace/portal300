@@ -126,6 +126,11 @@ static enum DoorState fetch_door_state(void);
 int main(int argc, char **argv) {
   // Initialize libraries and dependencies:
 
+  if(!log_init()) {
+    fprintf(stderr, "failed to initialize logging.\n");
+    return EXIT_FAILURE;
+  }
+
   if(!install_signal_handlers()) {
     log_print(LSS_SYSTEM, LL_ERROR, "failed to install signal handlers.");
     exit(EXIT_FAILURE);
