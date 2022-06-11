@@ -1,6 +1,8 @@
 #include "state-machine.h"
 #include <assert.h>
 
+#include <stdio.h>
+
 #define TIMEOUT_ENGAGE_BOLT 10000 // ms TODO: Figure out the right timing
 #define TIMEOUT_DISENGAGE_BOLT 10000 // ms TODO: Figure out the right timing
 #define TIMEOUT_USER_OPEN 10000 // ms
@@ -23,7 +25,7 @@ void sm_init(
   assert(setTimeout != NULL);
 
   *sm = (struct StateMachine) {
-    .door_state = -1, // unobserved
+    .door_state = DOOR_LOCKED, // unobserved
     .logic_state = STATE_IDLE,
 
     .user_data = user_data,
@@ -32,11 +34,27 @@ void sm_init(
   };
 }
 
+
+static char const * door_state_names[] = {
+  [DOOR_CLOSED] = "closed",
+  [DOOR_LOCKED] = "locked",
+  [DOOR_OPEN] = "open",
+  [DOOR_FAULT] = "fault",
+};
+
 void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state)
 {
   assert(sm != NULL);
   if(sm->door_state == new_state)
     return;
+
+  fprintf(stderr, "SM: door changed status from %s to %s.\n", 
+    door_state_names[sm->door_state],
+    door_state_names[new_state]
+  );
+  
+  sm->door_state = new_state;
+
   switch(sm->logic_state) {
     // process new door state here
   }
@@ -65,7 +83,6 @@ enum PortalError sm_send_event(struct StateMachine *sm, enum PortalEvent event)
   }
   return SM_SUCCESS;
 }
-
 
 enum DoorState sm_compute_state(bool locked, bool open)
 {

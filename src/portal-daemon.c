@@ -401,28 +401,28 @@ int main(int argc, char **argv) {
           case POLLFD_GPIO_LOCKED:
           case POLLFD_GPIO_CLOSED:
           case POLLFD_GPIO_BUTTON: {
-
-
             if(i == POLLFD_GPIO_LOCKED) {
               enum GpioEdge edge;
               if(!gpio_get_event(gpio.locked, &edge)) {
                 fprintf(stderr, "failed to read event for gpio locked\n");
               }
             }
-            if(i == POLLFD_GPIO_CLOSED) {
+            else if(i == POLLFD_GPIO_CLOSED) {
               enum GpioEdge edge;
               if(!gpio_get_event(gpio.closed, &edge)) {
                 fprintf(stderr, "failed to read event for gpio closed\n");
               }
             }
-            if(i == POLLFD_GPIO_BUTTON) {
+            else if(i == POLLFD_GPIO_BUTTON) {
               enum GpioEdge edge;
               if(!gpio_get_event(gpio.button, &edge)) {
                 fprintf(stderr, "failed to read event for gpio button\n");
               }
             }
-
-            fprintf(stderr, "io event. exciting!\n");
+            else {
+              // unknown GPIO input event, please fix
+              __builtin_unreachable();
+            }
 
             if(!update_state_machine_io(&portal_state)) {
               fprintf(stderr, "failed to get initial state of GPIO pins!\n");
@@ -431,7 +431,19 @@ int main(int argc, char **argv) {
 
             bool button_state;
             if(gpio_read(gpio.button, &button_state)) {
+
               fprintf(stderr, "button = %s\n", button_state ? "pressed" : "released");
+              
+              if(button_state) {
+                enum PortalError err = sm_send_event(&portal_state, EVENT_CLOSE);
+                if(err == SM_SUCCESS) {
+                  fprintf(stderr, "Triggering physical closing by button. Portal is now closing...\n");
+                }
+                else {
+                  fprintf(stderr, "Failed to close portal via physical button: error_code=%u\n", err);
+                }
+              }
+
             }
             else {
               fprintf(stderr, "failed to query button state\n");
@@ -501,16 +513,50 @@ int main(int argc, char **argv) {
                         (int)strnlen(msg.data.open.member_name, sizeof msg.data.open.member_name),
                         msg.data.open.member_name
                       );
+
+                      enum PortalError err = sm_send_event(&portal_state, EVENT_OPEN);
+                      if(err != SM_SUCCESS) {
+                        send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen:");
+                        switch(err) {
+                          case SM_ERR_IN_PROGRESS: send_ipc_infof(pfd.fd, "Eine Portal-Aktion ist grade in Bearbeitung. Bitte spreche dich mit dem Keyholder an der anderen Türe ab."); break;
+                          case SM_ERR_UNEXPECTED:  send_ipc_infof(pfd.fd, "Die Anfrage ÖFFNEN kann aktuell nicht verarbeitet werden."); break;
+                          default:                 send_ipc_infof(pfd.fd, "Ein unbekannter Fehler trat auf: ErrorCode=%d.", err); break;
+                        }
+                        remove_ipc_client(i);
+                        break;
+                      }
+
+                      send_ipc_infof(pfd.fd, "Portal wird geöffnet, bitte warten...");
+
                       break;
                     }
 
                     case IPC_MSG_CLOSE: {
                       fprintf(stderr, "client %zu requested portal close.\n", i);
+                      
+                      enum PortalError err = sm_send_event(&portal_state, EVENT_CLOSE);
+                      if(err != SM_SUCCESS) {
+                        send_ipc_infof(pfd.fd, "Konnte Portal nicht schließen:");
+                        switch(err) {
+                          case SM_ERR_IN_PROGRESS: send_ipc_infof(pfd.fd, "Eine Portal-Aktion ist grade in Bearbeitung. Bitte spreche dich mit dem Keyholder an der anderen Türe ab."); break;
+                          case SM_ERR_UNEXPECTED:  send_ipc_infof(pfd.fd, "Die Anfrage SCHLIESSEN kann aktuell nicht verarbeitet werden."); break;
+                          default:                 send_ipc_infof(pfd.fd, "Ein unbekannter Fehler trat auf: ErrorCode=%d.", err); break;
+                        }
+                        remove_ipc_client(i);
+                        break;
+                      }
+
+                      send_ipc_infof(pfd.fd, "Portal wird geschlossen, bitte warten...");
+
                       break;
                     }
 
                     case IPC_MSG_SHUTDOWN: {
-                      fprintf(stderr, "client %zu requested portal shutdown.\n", i);
+                      fprintf(stderr, "client %zu requested portal shutdown.", i);
+
+                      send_ipc_infof(pfd.fd, "Shutdown wird zur Zeit noch nicht unterstützt...");
+                      remove_ipc_client(i);
+
                       break;
                     }
 
@@ -583,6 +629,7 @@ int main(int argc, char **argv) {
   return EXIT_SUCCESS;
 }
 
+
 static bool update_state_machine_io(struct StateMachine * sm)
 {
   assert(sm != NULL); 
@@ -599,6 +646,7 @@ static bool update_state_machine_io(struct StateMachine * sm)
 
   enum DoorState state = sm_compute_state(locked, !closed);
   sm_change_door_state(sm, state);
+
   return true;
 }
 
