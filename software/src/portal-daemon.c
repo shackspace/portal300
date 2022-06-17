@@ -194,6 +194,9 @@ int main(int argc, char ** argv)
   }
 
   while (shutdown_requested == false) {
+    // sync the mqtt client to send some leftovers
+    mqtt_client_sync(mqtt_client);
+
     int const poll_ret = poll(pollfds, pollfds_size, -1); // wait infinitly for an event
     if (poll_ret == -1) {
       if (errno != EINTR) {

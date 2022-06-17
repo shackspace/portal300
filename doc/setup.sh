@@ -3,7 +3,8 @@
 apt install mosquitto jq
 
 # install portal software
-mkdir /opt/portal300 # base folder for everything
+useradd portal-daemon # add daemon user
+mkdir /opt/portal300  # base folder for everything
 
 git clone https://github.com/shackspace/portal300
 
