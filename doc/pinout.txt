@@ -1,0 +1,14 @@
+IO39: opener
+IO15: klingel-leser
+
+
+Grau und Orange: 5V
+	Grau: GND
+	Orange: 5V
+	Gelb:  Klingelsignal (Grau ist ref GND)
+	Braun: Emitter
+	Lila:  Collector
+
+
+Future Extensions:
+Shutdown => Kellerlicht ausmachen
