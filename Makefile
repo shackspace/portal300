@@ -12,7 +12,7 @@ TRIGGER_LIBS=
 
 all: bin/portal-daemon bin/portal-trigger
 
-bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/mqtt.a obj/state-machine.o obj/gpio.o obj/log.o
+bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/mqtt-mqtt.o obj/state-machine.o obj/gpio.o obj/log.o
 	$(LD) $(LFLAGS) -o "$@" $^ $(addprefix -l ,$(DAEMON_LIBS))
 
 bin/portal-trigger: obj/portal-trigger.o obj/ipc.o obj/log.o
@@ -21,10 +21,6 @@ bin/portal-trigger: obj/portal-trigger.o obj/ipc.o obj/log.o
 # application object files
 obj/%.o: src/%.c
 	$(CC) $(CFLAGS_APP) -c -o "$@" $<
-
-# mqtt-c library
-obj/mqtt.a: obj/mqtt-mqtt.o obj/mqtt-mqtt_pal.o
-	$(AR) rcs "$@" $^
 
 # objects for mqtt-c
 obj/mqtt-%.o: vendor/mqtt-c/src/%.c
