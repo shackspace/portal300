@@ -3,14 +3,16 @@
 
 #include <stdbool.h>
 
-enum LogLevel {
-  LL_ERROR = 0,
+enum LogLevel
+{
+  LL_ERROR   = 0,
   LL_WARNING = 1,
   LL_MESSAGE = 2,
   LL_VERBOSE = 3,
 };
 
-enum LogSubSystem {
+enum LogSubSystem
+{
   LSS_GENERIC,
   LSS_MQTT,
   LSS_LOGIC,
@@ -19,14 +21,14 @@ enum LogSubSystem {
   LSS_IPC,
 };
 
-struct LogConsumer {
+struct LogConsumer
+{
   // configure:
-  void *user_data;
-  void (*log)(void * user_data, enum LogSubSystem subsystem, enum LogLevel level,
-              char const *msg);
+  void * user_data;
+  void (*log)(void * user_data, enum LogSubSystem subsystem, enum LogLevel level, char const * msg);
 
   // internal:
-  struct LogConsumer *next;
+  struct LogConsumer * next;
 };
 
 extern enum LogLevel log_level;
@@ -34,14 +36,11 @@ extern enum LogLevel log_level;
 bool log_init(void);
 void log_deinit(void);
 
-void log_register_consumer(struct LogConsumer *consumer);
+void log_register_consumer(struct LogConsumer * consumer);
 
-void log_write(enum LogSubSystem subsystem, enum LogLevel level,
-               char const *msg);
-void log_print(enum LogSubSystem subsystem, enum LogLevel level,
-               char const *fmt, ...) __attribute__((format(printf, 3, 4)));
+void log_write(enum LogSubSystem subsystem, enum LogLevel level, char const * msg);
+void log_print(enum LogSubSystem subsystem, enum LogLevel level, char const * fmt, ...) __attribute__((format(printf, 3, 4)));
 
-void log_perror(enum LogSubSystem subsystem, enum LogLevel level,
-                char const *msg);
+void log_perror(enum LogSubSystem subsystem, enum LogLevel level, char const * msg);
 
 #endif

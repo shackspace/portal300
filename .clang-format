@@ -1,0 +1,43 @@
+IndentWidth: 2
+ColumnLimit: 0
+PointerAlignment: Middle
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveBitFields: Consecutive
+AlignConsecutiveDeclarations: Consecutive
+AlignConsecutiveMacros: Consecutive
+AlignEscapedNewlines: Left
+AlignTrailingComments: true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLambdasOnASingleLine: Inline
+AllowShortLoopsOnASingleLine: false
+#AlwaysBreakAfterReturnType: None
+AlwaysBreakBeforeMultilineStrings: true
+BinPackArguments: false
+BinPackParameters: false
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterEnum: true
+  AfterStruct: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterUnion: true
+  AfterExternBlock: true
+  BeforeCatch: false
+  BeforeElse: true
+  BeforeWhile: false
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+  AfterCaseLabel: true
+  SplitEmptyFunction: true
+
+SortIncludes: false
+
+AlignOperands: AlignAfterOperator
+# AlignAfterOpenBracket: BlockIndent
+
+# ReferenceAlignment: Middle
+# QualifierAlignment: Right

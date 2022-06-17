@@ -8,7 +8,7 @@
 #include <freertos/task.h>
 #include <freertos/atomic.h>
 
-#define PIN_OUT_OPEN GPIO_NUM_39
+#define PIN_OUT_OPEN  GPIO_NUM_39
 #define PIN_OUT_CLOSE GPIO_NUM_15
 
 #define PIN_IN_CLOSED GPIO_NUM_20
@@ -18,31 +18,30 @@
 static const bool output_active_high = false;
 
 static const gpio_config_t output_config = {
-  .pin_bit_mask = (1ULL << PIN_OUT_OPEN) | (1ULL << PIN_OUT_CLOSE),
-  .mode = GPIO_MODE_OUTPUT,
-  .pull_up_en = GPIO_PULLUP_DISABLE,
-  .pull_down_en = GPIO_PULLDOWN_DISABLE,
-  .intr_type = GPIO_INTR_DISABLE,
+    .pin_bit_mask = (1ULL << PIN_OUT_OPEN) | (1ULL << PIN_OUT_CLOSE),
+    .mode         = GPIO_MODE_OUTPUT,
+    .pull_up_en   = GPIO_PULLUP_DISABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type    = GPIO_INTR_DISABLE,
 };
 
 static const gpio_config_t input_config = {
-  .pin_bit_mask = (1ULL << PIN_IN_CLOSED) | (1ULL << PIN_IN_LOCKED) | (1ULL << PIN_IN_BUTTON),
-  .mode = GPIO_MODE_INPUT,
-  .pull_up_en = GPIO_PULLUP_ENABLE,
-  .pull_down_en = GPIO_PULLDOWN_DISABLE,
-  .intr_type = GPIO_INTR_ANYEDGE,
+    .pin_bit_mask = (1ULL << PIN_IN_CLOSED) | (1ULL << PIN_IN_LOCKED) | (1ULL << PIN_IN_BUTTON),
+    .mode         = GPIO_MODE_INPUT,
+    .pull_up_en   = GPIO_PULLUP_ENABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    .intr_type    = GPIO_INTR_ANYEDGE,
 };
 
 static IoInputChangedCallback callback = NULL;
 
-static void handle_gpio_interrupt(void*arg)
+static void handle_gpio_interrupt(void * arg)
 {
   (void)arg;
-  if(callback != NULL) {
-    callback ();
+  if (callback != NULL) {
+    callback();
   }
 }
-
 
 void io_init(IoInputChangedCallback callback)
 {

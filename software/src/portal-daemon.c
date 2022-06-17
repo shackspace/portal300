@@ -2,25 +2,27 @@
 #include "log.h"
 #include "mqtt-client.h"
 
+#include <portal300.h>
+
 #include <bits/types/struct_itimerspec.h>
 #include <getopt.h>
 #include <poll.h>
 #include <stdio.h>
 
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <sys/timerfd.h>
-#include <unistd.h>
-#include <stdbool.h>
-#include <signal.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <assert.h>
+#include <sys/un.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <mqtt.h>
 
@@ -30,9 +32,10 @@
 
 // Globals:
 
-struct CliOptions {
+struct CliOptions
+{
   char const * host_name;
-  int port;
+  int          port;
   char const * ca_cert_file;
   char const * client_key_file;
   char const * client_crt_file;
@@ -44,15 +47,15 @@ static int ipc_sock = -1;
 
 static struct MqttClient * mqtt_client = NULL;
 
-#define POLLFD_IPC          0 // well defined fd, always the unix socket for IPC 
-#define POLLFD_MQTT         1 // well defined fd, either the timerfd for reconnecting MQTT or the socket for MQTT communications
-#define POLLFD_FIRST_IPC    2 // First ipc client socket slot
-#define POLLFD_LIMIT       32 // number of maximum socket connections
+#define POLLFD_IPC       0  // well defined fd, always the unix socket for IPC
+#define POLLFD_MQTT      1  // well defined fd, either the timerfd for reconnecting MQTT or the socket for MQTT communications
+#define POLLFD_FIRST_IPC 2  // First ipc client socket slot
+#define POLLFD_LIMIT     32 // number of maximum socket connections
 
 //! Stack array of pollfds. Everything below POLLFD_FIRST_IPC is pre-intialized and has a static purpose
 //! while everything at POLLFD_FIRST_IPC till POLLFD_LIMIT is a dynamic stack of pollfds for ipc client connections.
 static struct pollfd pollfds[POLLFD_LIMIT];
-static size_t pollfds_size = POLLFD_FIRST_IPC;
+static size_t        pollfds_size = POLLFD_FIRST_IPC;
 
 //! Index of an invalid IPC client
 static const size_t INVALID_IPC_CLIENT = ~0U;
@@ -60,38 +63,39 @@ static const size_t INVALID_IPC_CLIENT = ~0U;
 static void close_ipc_sock(void);
 static void close_mqtt_client(void);
 
-static void sigint_handler(int sig, siginfo_t *info, void *ucontext);
-static void sigterm_handler(int sig, siginfo_t *info, void *ucontext);
+static void sigint_handler(int sig, siginfo_t * info, void * ucontext);
+static void sigterm_handler(int sig, siginfo_t * info, void * ucontext);
 
 static size_t add_ipc_client(int fd);
-static void remove_ipc_client(size_t index);
+static void   remove_ipc_client(size_t index);
 
 static bool try_connect_mqtt(void);
 static bool install_signal_handlers(void);
-static int create_reconnect_timeout_timer(int secs);
+static int  create_reconnect_timeout_timer(int secs);
 
 static bool send_ipc_info(int fd, char const * text);
-static bool send_ipc_infof(int fd, char const * fmt, ...) __attribute__ ((format (printf, 2, 3)));
+static bool send_ipc_infof(int fd, char const * fmt, ...) __attribute__((format(printf, 2, 3)));
 
 static bool fetch_timer_fd(int fd);
 
 // static bool disarm_timer(int timer);
 // static bool arm_timer(int timer, bool oneshot, uint32_t ms);
 
-int main(int argc, char **argv) {
+int main(int argc, char ** argv)
+{
   // Initialize libraries and dependencies:
 
-  if(!log_init()) {
+  if (!log_init()) {
     fprintf(stderr, "failed to initialize logging.\n");
     return EXIT_FAILURE;
   }
 
-  if(!install_signal_handlers()) {
+  if (!install_signal_handlers()) {
     log_print(LSS_SYSTEM, LL_ERROR, "failed to install signal handlers.");
     exit(EXIT_FAILURE);
   }
 
-  if(!mqtt_client_init()) {
+  if (!mqtt_client_init()) {
     log_write(LSS_MQTT, LL_ERROR, "failed to initialize mqtt client library. aborting.");
     return EXIT_FAILURE;
   }
@@ -99,79 +103,76 @@ int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
   struct CliOptions const cli = {
-    .host_name = "mqtt.portal.shackspace.de",
-    .port = 8883,
-    .ca_cert_file = "debug/ca.crt",
-    .client_key_file = "debug/client.key",
-    .client_crt_file = "debug/client.crt",
+      .host_name       = "mqtt.portal.shackspace.de",
+      .port            = 8883,
+      .ca_cert_file    = "debug/ca.crt",
+      .client_key_file = "debug/client.key",
+      .client_crt_file = "debug/client.crt",
   };
 
   // Create MQTT client from CLI info
   mqtt_client = mqtt_client_create(
-    cli.host_name,
-    cli.port,
-    cli.ca_cert_file,
-    cli.client_key_file,
-    cli.client_crt_file
-  );
-  if(mqtt_client == NULL) {
+      cli.host_name,
+      cli.port,
+      cli.ca_cert_file,
+      cli.client_key_file,
+      cli.client_crt_file);
+  if (mqtt_client == NULL) {
     log_write(LSS_MQTT, LL_ERROR, "failed to create mqtt client.");
     return EXIT_FAILURE;
   }
   atexit(close_mqtt_client);
-  
+
   ipc_sock = ipc_create_socket();
   if (ipc_sock == -1) {
     return EXIT_FAILURE;
   }
 
-  if(try_connect_mqtt())
-  {
+  if (try_connect_mqtt()) {
     // we successfully connected to MQTT, set up the poll entry for MQTT action:
-    pollfds[POLLFD_MQTT] = (struct pollfd) {
-      .fd = mqtt_client_get_socket_fd(mqtt_client),
-      .events = POLLIN,
-      .revents = 0,
+    pollfds[POLLFD_MQTT] = (struct pollfd){
+        .fd      = mqtt_client_get_socket_fd(mqtt_client),
+        .events  = POLLIN,
+        .revents = 0,
     };
   }
-  else
-  {
+  else {
     log_print(LSS_MQTT, LL_WARNING, "failed to connect to mqtt server, retrying in %d seconds", MQTT_RECONNECT_TIMEOUT);
 
     // we failed to connect to MQTT, set up a timerfd to retry in some seconds
     int timer = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
- 
-    pollfds[POLLFD_MQTT] = (struct pollfd) {
-      .fd = timer,
-      .events = POLLIN,
-      .revents = 0,
+
+    pollfds[POLLFD_MQTT] = (struct pollfd){
+        .fd      = timer,
+        .events  = POLLIN,
+        .revents = 0,
     };
   }
 
-  // Bind and setup the ipc socket, so we can receive ipc messages 
+  // Bind and setup the ipc socket, so we can receive ipc messages
   {
-    if(bind(ipc_sock, (struct sockaddr const *) &ipc_socket_address, sizeof ipc_socket_address) == -1) {
+    if (bind(ipc_sock, (struct sockaddr const *)&ipc_socket_address, sizeof ipc_socket_address) == -1) {
       log_perror(LSS_IPC, LL_ERROR, "failed to bind ipc socket");
       log_print(LSS_IPC, LL_ERROR, "is another instance of this daemon already running?");
       return EXIT_FAILURE;
     }
     atexit(close_ipc_sock);
 
-    if(listen(ipc_sock, 0) == -1) {
+    if (listen(ipc_sock, 0) == -1) {
       log_perror(LSS_IPC, LL_ERROR, "failed to listen on ipc socket");
       return EXIT_FAILURE;
     }
-    pollfds[POLLFD_IPC] = (struct pollfd) {
-      .fd = ipc_sock,
-      .events = POLLIN,
-      .revents = 0,
+    pollfds[POLLFD_IPC] = (struct pollfd){
+        .fd      = ipc_sock,
+        .events  = POLLIN,
+        .revents = 0,
     };
   }
 
-  while(shutdown_requested == false) {
+  while (shutdown_requested == false) {
     int const poll_ret = poll(pollfds, pollfds_size, -1); // wait infinitly for an event
-    if(poll_ret == -1) {
-      if(errno != EINTR) {
+    if (poll_ret == -1) {
+      if (errno != EINTR) {
         log_perror(LSS_SYSTEM, LL_ERROR, "central poll failed");
       }
       continue;
@@ -180,161 +181,165 @@ int main(int argc, char **argv) {
     struct timespec loop_start, loop_end;
     clock_gettime(CLOCK_MONOTONIC, &loop_start);
 
-    for(size_t i = 0; i < pollfds_size; i++) {
+    for (size_t i = 0; i < pollfds_size; i++) {
       const struct pollfd pfd = pollfds[i];
-      if(pfd.revents != 0) {
-        switch(i) {
-          // this is the IPC listener. accept clients here
-          case POLLFD_IPC: {
-            assert(pfd.fd == ipc_sock);
+      if (pfd.revents != 0) {
+        switch (i) {
+        // this is the IPC listener. accept clients here
+        case POLLFD_IPC:
+        {
+          assert(pfd.fd == ipc_sock);
 
-            int client_fd = accept(ipc_sock, NULL, NULL);
-            if(client_fd != -1) {
-              size_t const index = add_ipc_client(client_fd);
-              if(index != INVALID_IPC_CLIENT) {
-                 log_print(LSS_IPC, LL_MESSAGE, "accepted new IPC client on connection slot %zu", index);
-              }
-              else {
-                if(close(client_fd) == -1) {
-                  log_perror(LSS_IPC, LL_WARNING, "failed to close ipc socket connection");
-                }
-              }
+          int client_fd = accept(ipc_sock, NULL, NULL);
+          if (client_fd != -1) {
+            size_t const index = add_ipc_client(client_fd);
+            if (index != INVALID_IPC_CLIENT) {
+              log_print(LSS_IPC, LL_MESSAGE, "accepted new IPC client on connection slot %zu", index);
             }
             else {
-              log_perror(LSS_IPC, LL_WARNING, "failed to accept ipc client");
+              if (close(client_fd) == -1) {
+                log_perror(LSS_IPC, LL_WARNING, "failed to close ipc socket connection");
+              }
             }
-            break;
           }
+          else {
+            log_perror(LSS_IPC, LL_WARNING, "failed to accept ipc client");
+          }
+          break;
+        }
 
-          // Incoming MQTT message or connection closure
-          case POLLFD_MQTT: {
-            if(mqtt_client_is_connected(mqtt_client)) {
-              // we're connected, so the fd is the mqtt socket.
-              // process messages and handle errors here.
+        // Incoming MQTT message or connection closure
+        case POLLFD_MQTT:
+        {
+          if (mqtt_client_is_connected(mqtt_client)) {
+            // we're connected, so the fd is the mqtt socket.
+            // process messages and handle errors here.
 
-              if(!mqtt_client_sync(mqtt_client)) {
-                if(mqtt_client_is_connected(mqtt_client)) {
-                  // TODO: Handle mqtt errors
-                  log_write(LSS_MQTT, LL_ERROR, "Handle MQTT error here gracefully");
-                }
-                else {
-                  log_print(LSS_MQTT, LL_WARNING, "Lost connection to MQTT, reconnecting in %d seconds...", MQTT_RECONNECT_TIMEOUT);
-                  pollfds[i].fd = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
-                }
-              }
-            }
-            else {
-              if(!fetch_timer_fd(pfd.fd)) {
-                log_perror(LSS_MQTT, LL_ERROR, "failed to read from timerfd");
-                log_write(LSS_MQTT, LL_ERROR, "destroying daemon, hoping for restart...");
-                exit(EXIT_FAILURE);
-              }
-
-              if(try_connect_mqtt()) {
-                log_write(LSS_MQTT, LL_MESSAGE, "successfully reconnected to mqtt server.");
-
-                if(close(pfd.fd) == -1) {
-                  log_perror(LSS_MQTT, LL_WARNING, "failed to destroy timerfd");
-                }
-
-                pollfds[i].fd = mqtt_client_get_socket_fd(mqtt_client);
+            if (!mqtt_client_sync(mqtt_client)) {
+              if (mqtt_client_is_connected(mqtt_client)) {
+                // TODO: Handle mqtt errors
+                log_write(LSS_MQTT, LL_ERROR, "Handle MQTT error here gracefully");
               }
               else {
-                  log_print(LSS_MQTT, LL_WARNING, "failed to connect to mqtt server, retrying in %d seconds", MQTT_RECONNECT_TIMEOUT);
+                log_print(LSS_MQTT, LL_WARNING, "Lost connection to MQTT, reconnecting in %d seconds...", MQTT_RECONNECT_TIMEOUT);
+                pollfds[i].fd = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
               }
             }
-            break;
           }
+          else {
+            if (!fetch_timer_fd(pfd.fd)) {
+              log_perror(LSS_MQTT, LL_ERROR, "failed to read from timerfd");
+              log_write(LSS_MQTT, LL_ERROR, "destroying daemon, hoping for restart...");
+              exit(EXIT_FAILURE);
+            }
 
-          // IPC client message or error
-          default: {
-            if(pfd.revents & POLLERR) {
-              log_print(LSS_IPC, LL_MESSAGE, "lost IPC client on connection slot %zu", i);
+            if (try_connect_mqtt()) {
+              log_write(LSS_MQTT, LL_MESSAGE, "successfully reconnected to mqtt server.");
+
+              if (close(pfd.fd) == -1) {
+                log_perror(LSS_MQTT, LL_WARNING, "failed to destroy timerfd");
+              }
+
+              pollfds[i].fd = mqtt_client_get_socket_fd(mqtt_client);
+            }
+            else {
+              log_print(LSS_MQTT, LL_WARNING, "failed to connect to mqtt server, retrying in %d seconds", MQTT_RECONNECT_TIMEOUT);
+            }
+          }
+          break;
+        }
+
+        // IPC client message or error
+        default:
+        {
+          if (pfd.revents & POLLERR) {
+            log_print(LSS_IPC, LL_MESSAGE, "lost IPC client on connection slot %zu", i);
+            remove_ipc_client(i);
+          }
+          else if (pfd.revents & POLLIN) {
+            struct IpcMessage msg;
+
+            enum IpcRcvResult msg_ok = ipc_receive_msg(pfd.fd, &msg);
+
+            switch (msg_ok) {
+            case IPC_EOF:
+            {
               remove_ipc_client(i);
+              log_print(LSS_IPC, LL_MESSAGE, "connection to ipc socket slot %zu closed", i);
+              break;
             }
-            else if(pfd.revents & POLLIN) {
-              struct IpcMessage msg;
+            case IPC_ERROR:
+            {
+              // we already printed an error message, just try again in the next loop
+              break;
+            }
+            case IPC_SUCCESS:
+            {
+              switch (msg.type) {
+              case IPC_MSG_OPEN_BACK:
+              case IPC_MSG_OPEN_FRONT:
+              {
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal opening via %s for (%d, '%.*s', '%.*s').", i, (msg.type == IPC_MSG_OPEN_BACK) ? "back door" : "front door", msg.data.open.member_id, (int)strnlen(msg.data.open.member_nick, sizeof msg.data.open.member_nick), msg.data.open.member_nick, (int)strnlen(msg.data.open.member_name, sizeof msg.data.open.member_name), msg.data.open.member_name);
 
-              enum IpcRcvResult msg_ok = ipc_receive_msg(pfd.fd, &msg);
+                // TODO: Handle open message
 
-              switch(msg_ok) {
-                case IPC_EOF: {
-                  remove_ipc_client(i);
-                  log_print(LSS_IPC, LL_MESSAGE, "connection to ipc socket slot %zu closed", i);
-                  break;
-                }
-                case IPC_ERROR: {
-                  // we already printed an error message, just try again in the next loop
-                  break;
-                }
-                case IPC_SUCCESS: {
-                  switch(msg.type) {
-                    case IPC_MSG_OPEN: {
-                      log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal opening for (%d, '%.*s', '%.*s').", 
-                        i,
-                        msg.data.open.member_id,
-                        (int)strnlen(msg.data.open.member_nick, sizeof msg.data.open.member_nick),
-                        msg.data.open.member_nick,
-                        (int)strnlen(msg.data.open.member_name, sizeof msg.data.open.member_name),
-                        msg.data.open.member_name
-                      );
+                send_ipc_infof(pfd.fd, "Portal wird geöffnet, bitte warten...");
 
-                      // TODO: Handle open message
+                break;
+              }
 
-                      send_ipc_infof(pfd.fd, "Portal wird geöffnet, bitte warten...");
+              case IPC_MSG_CLOSE:
+              {
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal close.", i);
 
-                      break;
-                    }
+                // TODO: Handle close message
 
-                    case IPC_MSG_CLOSE: {
-                      log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal close.", i);
-                      
-                      // TODO: Handle close message
+                send_ipc_infof(pfd.fd, "Portal wird geschlossen, bitte warten...");
 
-                      send_ipc_infof(pfd.fd, "Portal wird geschlossen, bitte warten...");
+                break;
+              }
 
-                      break;
-                    }
+              case IPC_MSG_SHUTDOWN:
+              {
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal shutdown.", i);
 
-                    case IPC_MSG_SHUTDOWN: {
-                      log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal shutdown.", i);
+                send_ipc_infof(pfd.fd, "Shutdown wird zur Zeit noch nicht unterstützt...");
+                remove_ipc_client(i);
 
-                      send_ipc_infof(pfd.fd, "Shutdown wird zur Zeit noch nicht unterstützt...");
-                      remove_ipc_client(i);
+                break;
+              }
 
-                      break;
-                    }
+              case IPC_MSG_QUERY_STATUS:
+              {
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal status.", i);
 
-                    case IPC_MSG_QUERY_STATUS: {
-                      log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal status.", i);
+                (void)send_ipc_infof(pfd.fd, "Portal-Status:");
+                (void)send_ipc_infof(pfd.fd, "  Aktivität:     %s", "???"); // idle, öffnen, schließen
+                (void)send_ipc_infof(pfd.fd, "  MQTT:          %s", mqtt_client_is_connected(mqtt_client) ? "Verbunden" : "Nicht verbunden");
+                (void)send_ipc_infof(pfd.fd, "  IPC Clients:   %zu", pollfds_size - POLLFD_FIRST_IPC);
+                (void)send_ipc_infof(pfd.fd, "  Schließbolzen: %s", "???"); // geöffnet, geschlossen
+                (void)send_ipc_infof(pfd.fd, "  Türsensor:     %s", "???"); // geöffnet, geschlossen
+                (void)send_ipc_info(pfd.fd, "");
+                (void)send_ipc_infof(pfd.fd, "Das Portal ist noch nicht vollständig implementiert. Auf Wiedersehen!");
 
-                      (void)send_ipc_infof(pfd.fd, "Portal-Status:");
-                      (void)send_ipc_infof(pfd.fd, "  Aktivität:     %s", "???"); // idle, öffnen, schließen
-                      (void)send_ipc_infof(pfd.fd, "  MQTT:          %s",  mqtt_client_is_connected(mqtt_client) ? "Verbunden" : "Nicht verbunden");
-                      (void)send_ipc_infof(pfd.fd, "  IPC Clients:   %zu", pollfds_size - POLLFD_FIRST_IPC);
-                      (void)send_ipc_infof(pfd.fd, "  Schließbolzen: %s", "???"); // geöffnet, geschlossen
-                      (void)send_ipc_infof(pfd.fd, "  Türsensor:     %s", "???"); // geöffnet, geschlossen
-                      (void)send_ipc_info(pfd.fd, "");
-                      (void)send_ipc_infof(pfd.fd, "Das Portal ist noch nicht vollständig implementiert. Auf Wiedersehen!");
+                // after a status message, we can just drop the client connection
+                remove_ipc_client(i);
+                break;
+              }
 
-                      // after a status message, we can just drop the client connection
-                      remove_ipc_client(i);
-                      break;
-                    }
-
-                    default: {
-                      // Invalid message received. Print error message and kick the client
-                      log_print(LSS_IPC, LL_WARNING, "received invalid ipc message of type %u", msg.type);
-                      remove_ipc_client(i);
-                      break;
-                    }
-                  }
-
-                }
+              default:
+              {
+                // Invalid message received. Print error message and kick the client
+                log_print(LSS_IPC, LL_WARNING, "received invalid ipc message of type %u", msg.type);
+                remove_ipc_client(i);
+                break;
+              }
               }
             }
-            break;
+            }
           }
+          break;
+        }
         }
       }
     }
@@ -342,27 +347,28 @@ int main(int argc, char **argv) {
     clock_gettime(CLOCK_MONOTONIC, &loop_end);
 
     uint64_t total_nsecs = 1000000000UL * (loop_end.tv_sec - loop_start.tv_sec);
-    
+
     if ((loop_end.tv_nsec - loop_start.tv_nsec) < 0) {
-        total_nsecs += loop_end.tv_nsec - loop_start.tv_nsec + 1000000000UL;
-        total_nsecs -= 1;
-    } else {
-        total_nsecs += loop_end.tv_nsec - loop_start.tv_nsec;
+      total_nsecs += loop_end.tv_nsec - loop_start.tv_nsec + 1000000000UL;
+      total_nsecs -= 1;
+    }
+    else {
+      total_nsecs += loop_end.tv_nsec - loop_start.tv_nsec;
     }
 
-    if(total_nsecs > 10000000UL) { // 1ms
-      double time = total_nsecs;
+    if (total_nsecs > 10000000UL) { // 1ms
+      double       time = total_nsecs;
       char const * unit = "ns";
 
-      if(total_nsecs >= 1500000000UL) {
+      if (total_nsecs >= 1500000000UL) {
         unit = "s";
         time = total_nsecs / 10000000000.0;
       }
-      else if(total_nsecs >= 1500000UL) {
+      else if (total_nsecs >= 1500000UL) {
         unit = "ms";
         time = total_nsecs / 10000000.0;
       }
-      else if(total_nsecs >= 1500UL) {
+      else if (total_nsecs >= 1500UL) {
         unit = "us";
         time = total_nsecs / 1000.0;
       }
@@ -377,8 +383,8 @@ int main(int argc, char **argv) {
 static bool send_ipc_info(int fd, char const * text)
 {
   struct IpcMessage msg = {
-    .type = IPC_MSG_INFO,
-    .data.info = "",
+      .type      = IPC_MSG_INFO,
+      .data.info = "",
   };
 
   strncpy(msg.data.info, text, sizeof msg.data.info);
@@ -386,11 +392,11 @@ static bool send_ipc_info(int fd, char const * text)
   return ipc_send_msg(fd, msg);
 }
 
-static bool send_ipc_infof(int fd, char const * fmt, ...) 
+static bool send_ipc_infof(int fd, char const * fmt, ...)
 {
   struct IpcMessage msg = {
-    .type = IPC_MSG_INFO,
-    .data.info = "",
+      .type      = IPC_MSG_INFO,
+      .data.info = "",
   };
 
   va_list list;
@@ -405,17 +411,33 @@ static bool try_connect_mqtt()
 {
   assert(mqtt_client != NULL);
 
-  if(!mqtt_client_connect(mqtt_client)) {
+  if (!mqtt_client_connect(mqtt_client)) {
     return false;
   }
 
-  if(!mqtt_client_publish(mqtt_client, "system/demo", "Hello, World!", 2)) {
+  if (!mqtt_client_publish(mqtt_client, SYSTEM_STATUS, "Hello, World!", 2)) {
     log_print(LSS_MQTT, LL_ERROR, "failed to publish message to mqtt server.");
     return false;
   }
-  
-  if(!mqtt_client_subscribe(mqtt_client, "#")) {
+
+  if (!mqtt_client_subscribe(mqtt_client, "#")) {
     log_print(LSS_MQTT, LL_ERROR, "failed to subscribe to topic '#' on mqtt server.");
+    return false;
+  }
+
+  return true;
+}
+
+static bool send_mqtt_msg(char const * topic, char const * data, size_t data_length)
+{
+  assert(topic != NULL);
+  assert(data != NULL);
+  if (data_length == 0) {
+    data_length = strlen(data);
+  }
+
+  if (!mqtt_client_publish(mqtt_client, topic, "Hello, World!", 2)) {
+    log_print(LSS_MQTT, LL_ERROR, "failed to publish message to mqtt server.");
     return false;
   }
 
@@ -425,19 +447,19 @@ static bool try_connect_mqtt()
 static bool install_signal_handlers()
 {
   static struct sigaction const sigint_action = {
-    .sa_sigaction = sigint_handler,
-    .sa_flags = SA_SIGINFO,
+      .sa_sigaction = sigint_handler,
+      .sa_flags     = SA_SIGINFO,
   };
-  if(sigaction(SIGINT, &sigint_action, NULL) == -1) {
+  if (sigaction(SIGINT, &sigint_action, NULL) == -1) {
     log_perror(LSS_SYSTEM, LL_ERROR, "failed to set SIGINT handler");
     return false;
   }
 
   static struct sigaction const sigterm_action = {
-    .sa_sigaction = sigterm_handler,
-    .sa_flags = SA_SIGINFO,
+      .sa_sigaction = sigterm_handler,
+      .sa_flags     = SA_SIGINFO,
   };
-  if(sigaction(SIGTERM, &sigterm_action, NULL) == -1) {
+  if (sigaction(SIGTERM, &sigterm_action, NULL) == -1) {
     log_perror(LSS_SYSTEM, LL_ERROR, "failed to set SIGTERM handler");
     return false;
   }
@@ -448,24 +470,24 @@ static bool install_signal_handlers()
 static int create_reconnect_timeout_timer(int secs)
 {
   const struct itimerspec restart_timeout = {
-    .it_value = {
-      .tv_sec = secs,
-      .tv_nsec = 0,
-    },
-    .it_interval = {
-      .tv_sec = secs,
-      .tv_nsec = 0,
-    },
+      .it_value = {
+          .tv_sec  = secs,
+          .tv_nsec = 0,
+      },
+      .it_interval = {
+          .tv_sec  = secs,
+          .tv_nsec = 0,
+      },
   };
 
   int timer = timerfd_create(CLOCK_MONOTONIC, 0);
-  if(timer == -1) {
+  if (timer == -1) {
     log_perror(LSS_SYSTEM, LL_ERROR, "failed to create timerfd");
     log_print(LSS_SYSTEM, LL_ERROR, "destroying daemon, hoping for restart...");
     exit(EXIT_FAILURE);
   }
 
-  if(timerfd_settime(timer, 0, &restart_timeout, NULL) == -1) {
+  if (timerfd_settime(timer, 0, &restart_timeout, NULL) == -1) {
     log_perror(LSS_SYSTEM, LL_ERROR, "failed to arm timerfd");
     log_print(LSS_SYSTEM, LL_ERROR, "destroying daemon, hoping for restart...");
     exit(EXIT_FAILURE);
@@ -487,7 +509,7 @@ static int create_reconnect_timeout_timer(int secs)
 //     .tv_sec = 0,
 //     .tv_nsec = 0,
 //   };
-  
+
 //   struct itimerspec timeout;
 //   if(oneshot) {
 //     timeout = (struct itimerspec) {
@@ -511,11 +533,10 @@ static int create_reconnect_timeout_timer(int secs)
 //   return timer;
 // }
 
-// static bool disarm_timer(int timer) 
+// static bool disarm_timer(int timer)
 // {
 //   return configure_timerfd(timer, false, 0);
 // }
-
 
 // static bool arm_timer(int timer, bool oneshot, uint32_t ms)
 // {
@@ -523,8 +544,9 @@ static int create_reconnect_timeout_timer(int secs)
 //   return configure_timerfd(timer, oneshot, ms);
 // }
 
-static size_t add_ipc_client(int fd) {
-  if(pollfds_size >= POLLFD_LIMIT) {
+static size_t add_ipc_client(int fd)
+{
+  if (pollfds_size >= POLLFD_LIMIT) {
     log_print(LSS_IPC, LL_WARNING, "cannot accept ipc client: too many ipc connections!");
     return INVALID_IPC_CLIENT;
   }
@@ -532,58 +554,61 @@ static size_t add_ipc_client(int fd) {
   size_t index = pollfds_size;
   pollfds_size += 1;
 
-  pollfds[index] = (struct pollfd) {
-    .fd = fd,
-    .events = POLLIN,
-    .revents = 0,
+  pollfds[index] = (struct pollfd){
+      .fd      = fd,
+      .events  = POLLIN,
+      .revents = 0,
   };
 
   return index;
 }
 
-static void remove_ipc_client(size_t index) {
+static void remove_ipc_client(size_t index)
+{
   assert(index >= POLLFD_FIRST_IPC);
   assert(index < pollfds_size);
 
   // close the socket when we remove a client connection
-  if(close(pollfds[index].fd) == -1) {
+  if (close(pollfds[index].fd) == -1) {
     log_perror(LSS_IPC, LL_ERROR, "failed to close ipc client");
   }
 
   // swap-remove with the last index
   // NOTE: This doesn't hurt us when (index == pollfds_size-1), as we're gonna wipe the element then anyways
   pollfds[index] = pollfds[pollfds_size - 1];
-  
+
   pollfds_size -= 1;
   memset(&pollfds[pollfds_size], 0xAA, sizeof(struct pollfd));
 }
 
-
-static void close_ipc_sock() {
-  if(close(ipc_sock) == -1) {
+static void close_ipc_sock()
+{
+  if (close(ipc_sock) == -1) {
     log_perror(LSS_IPC, LL_WARNING, "failed to close ipc socket properly");
   }
   ipc_sock = -1;
 
-  if(unlink(ipc_socket_address.sun_path) == -1) {
+  if (unlink(ipc_socket_address.sun_path) == -1) {
     log_perror(LSS_IPC, LL_ERROR, "failed to delete socket handle");
   }
 }
 
-static void close_mqtt_client() {
+static void close_mqtt_client()
+{
   mqtt_client_destroy(mqtt_client);
   mqtt_client = NULL;
 }
 
-
-static void sigint_handler(int sig, siginfo_t *info, void *ucontext) {
+static void sigint_handler(int sig, siginfo_t * info, void * ucontext)
+{
   (void)sig;
   (void)info;
   (void)ucontext;
   shutdown_requested = 1;
 }
 
-static void sigterm_handler(int sig, siginfo_t *info, void *ucontext) {
+static void sigterm_handler(int sig, siginfo_t * info, void * ucontext)
+{
   (void)sig;
   (void)info;
   (void)ucontext;
@@ -593,8 +618,8 @@ static void sigterm_handler(int sig, siginfo_t *info, void *ucontext) {
 static bool fetch_timer_fd(int fd)
 {
   uint64_t counter;
-  int res = read(fd, &counter, sizeof counter);
-  if(res == -1) {
+  int      res = read(fd, &counter, sizeof counter);
+  if (res == -1) {
     log_perror(LSS_SYSTEM, LL_ERROR, "failed to read from timerfd");
     return false;
   }
