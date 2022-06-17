@@ -12,6 +12,10 @@ TRIGGER_LIBS=
 
 all: bin/portal-daemon bin/portal-trigger
 
+install: bin/portal-daemon bin/portal-trigger
+	mkdir -p /opt/portal300/
+	cp bin/portal-daemon bin/portal-trigger /opt/portal300/
+
 bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/mqtt-mqtt.o obj/log.o
 	$(LD) $(LFLAGS) -o "$@" $^ $(addprefix -l ,$(DAEMON_LIBS))
 
