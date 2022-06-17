@@ -116,7 +116,9 @@ int main(int argc, char ** argv)
       cli.port,
       cli.ca_cert_file,
       cli.client_key_file,
-      cli.client_crt_file);
+      cli.client_crt_file,
+      PORTAL300_TOPIC_STATUS_SSH_INTERFACE,
+      "offline");
   if (mqtt_client == NULL) {
     log_write(LSS_MQTT, LL_ERROR, "failed to create mqtt client.");
     return EXIT_FAILURE;
@@ -415,7 +417,7 @@ static bool try_connect_mqtt()
     return false;
   }
 
-  if (!mqtt_client_publish(mqtt_client, SYSTEM_STATUS, "Hello, World!", 2)) {
+  if (!mqtt_client_publish(mqtt_client, PORTAL300_TOPIC_STATUS_SSH_INTERFACE, "online", 2)) {
     log_print(LSS_MQTT, LL_ERROR, "failed to publish message to mqtt server.");
     return false;
   }

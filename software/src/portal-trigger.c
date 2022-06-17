@@ -16,10 +16,11 @@ static void panic(char const * msg);
 
 enum PortalAction
 {
-  PA_OPEN     = 1,
-  PA_CLOSE    = 2,
-  PA_SHUTDOWN = 3,
-  PA_STATUS   = 4,
+  PA_OPEN_FRONT = 1,
+  PA_OPEN_BACK  = 2,
+  PA_CLOSE      = 3,
+  PA_SHUTDOWN   = 4,
+  PA_STATUS     = 5,
 };
 
 struct PortalArgs
@@ -67,10 +68,11 @@ int main(int argc, char ** argv)
   // printf("member_name = %s\n", cli.member_name);
 
   switch (cli.action) {
-  case PA_OPEN:
+  case PA_OPEN_BACK:
+  case PA_OPEN_FRONT:
   {
     struct IpcMessage msg = {
-        .type                = IPC_MSG_OPEN,
+        .type                = (cli.action == PA_OPEN_FRONT) ? IPC_MSG_OPEN_FRONT : IPC_MSG_OPEN_BACK,
         .data.open.member_id = cli.member_id,
     };
     strncpy(msg.data.open.member_name, cli.member_name, IPC_MAX_NAME_LEN);
@@ -258,8 +260,11 @@ static bool parse_cli(int argc, char ** argv, struct PortalArgs * args)
 
   const char * const action_str = argv[optind];
 
-  if (strcmp(action_str, "open") == 0) {
-    args->action = PA_OPEN;
+  if (strcmp(action_str, "open-front") == 0) {
+    args->action = PA_OPEN_FRONT;
+  }
+  else if (strcmp(action_str, "open-back") == 0) {
+    args->action = PA_OPEN_BACK;
   }
   else if (strcmp(action_str, "close") == 0) {
     args->action = PA_CLOSE;
@@ -277,7 +282,7 @@ static bool parse_cli(int argc, char ** argv, struct PortalArgs * args)
 
   bool params_ok = true;
 
-  bool requires_user_info = (args->action == PA_OPEN);
+  bool requires_user_info = (args->action == PA_OPEN_FRONT) || (args->action == PA_OPEN_BACK);
 
   if (requires_user_info) {
     if (args->member_id == 0) {

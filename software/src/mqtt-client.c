@@ -84,7 +84,7 @@ struct MqttClient * mqtt_client_create(
   if (client->cfg_host_name == NULL) {
     goto _error_deinit_memory;
   }
-  if((last_will_topic != NULL) && ((client->lw_topic == NULL) || (client->lw_data == NULL)) {
+  if ((last_will_topic != NULL) && ((client->lw_topic == NULL) || (client->lw_data == NULL))) {
     goto _error_deinit_memory;
   }
 
