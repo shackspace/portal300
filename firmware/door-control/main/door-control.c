@@ -15,9 +15,13 @@
 // Configuration:
 
 // The door we are attached to
-#define CURRENT_DOOR DOOR_B2
+#define CURRENT_DOOR   DOOR_B2
+#define CURRENT_DEVICE DOOR_CONTROL_B2
 
 /////////////////////////////////////////////////////////////////////
+
+#define STATUS_TOPIC_INNER(_Name) PORTAL300_TOPIC_STATUS_##_Name
+#define STATUS_TOPIC(_Name)       STATUS_TOPIC_INNER(_Name)
 
 #define TAG "application logic"
 
@@ -37,6 +41,8 @@ static void on_mqtt_data_received(struct MqttEvent const * event);
 static const struct MqttConfig mqtt_config = {
     .host_name = "mqtt.portal.shackspace.de",
     .client_id = "portal.control." CURRENT_DOOR,
+
+    .device_status_topic = STATUS_TOPIC(CURRENT_DEVICE),
 
     .client_crt = client_crt,
     .client_key = client_key,
@@ -105,24 +111,35 @@ void app_main(void)
     EventBits_t const current_state = xEventGroupWaitBits(
         event_group,
         EVENT_SM_TIMEOUT_BIT | EVENT_SM_IO_CHANGED_BIT | EVENT_SM_CLOSE_REQUEST | EVENT_SM_OPEN_REQUEST,
-        pdTRUE,                   // clear on return
-        pdFALSE,                  // return as soon as one bit was set
-        1000 / portTICK_PERIOD_MS // wait some time
+        pdTRUE,                    // clear on return
+        pdFALSE,                   // return as soon as one bit was set
+        10000 / portTICK_PERIOD_MS // wait some time
     );
 
     ESP_LOGI(TAG, "Events happened: %02X", current_state);
 
     if (current_state & EVENT_SM_TIMEOUT_BIT) {
+      ESP_LOGI(TAG, "forwarding timeout to state machine.");
       log_sm_error(sm_send_event(&core_logic, EVENT_TIMEOUT));
     }
     if (current_state & EVENT_SM_IO_CHANGED_BIT) {
-      door_state = get_door_state();
+      door_state         = get_door_state();
+      char const * state = "unknown";
+      switch (door_state) {
+      case DOOR_CLOSED: state = "closed"; break;
+      case DOOR_LOCKED: state = "locked"; break;
+      case DOOR_OPEN: state = "open"; break;
+      case DOOR_FAULT: state = "fault"; break;
+      }
+      ESP_LOGI(TAG, "forwarding io pin change to door status locked=%u, closed=%u, state=%s", io_get_locked(), io_get_closed(), state);
       sm_change_door_state(&core_logic, door_state);
     }
     if (current_state & EVENT_SM_CLOSE_REQUEST) {
+      ESP_LOGI(TAG, "forwarding open request to state machine.");
       log_sm_error(sm_send_event(&core_logic, EVENT_CLOSE));
     }
     if (current_state & EVENT_SM_OPEN_REQUEST) {
+      ESP_LOGI(TAG, "forwarding open request to state machine.");
       log_sm_error(sm_send_event(&core_logic, EVENT_OPEN));
     }
   }
@@ -138,11 +155,13 @@ static void on_mqtt_data_received(struct MqttEvent const * event)
 {
   if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_OPEN_DOOR)) {
     if (mqtt_event_has_data(event, CURRENT_DOOR)) {
+      ESP_LOGI(TAG, "Received open command");
       xEventGroupSetBits(event_group, EVENT_SM_OPEN_REQUEST);
     }
   }
   else if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_CLOSE_DOOR)) {
     if (mqtt_event_has_data(event, CURRENT_DOOR)) {
+      ESP_LOGI(TAG, "Received close command");
       xEventGroupSetBits(event_group, EVENT_SM_CLOSE_REQUEST);
     }
   }
@@ -170,14 +189,20 @@ static void statemachine_signal(struct StateMachine * sm, enum PortalSignal sign
 
 static void io_changed_level(void)
 {
+  ESP_LOGI(TAG, "IOs changed level");
   xEventGroupSetBits(event_group, EVENT_SM_IO_CHANGED_BIT);
 }
 
 static void statemachine_triggerTimeout(void * param)
 {
   uint32_t ms = (uint32_t)param;
+  ESP_LOGI(TAG, "Waiting for %u ms until timeout", ms);
   vTaskDelay(ms / portTICK_PERIOD_MS);
+  ESP_LOGI(TAG, "%u ms elapsed, triggering timeout", ms);
   xEventGroupSetBits(event_group, EVENT_SM_TIMEOUT_BIT);
+  TaskHandle_t self = timeout_task;
+  timeout_task      = NULL;
+  vTaskDelete(self);
 }
 
 static void statemachine_setTimeout(struct StateMachine * sm, uint32_t ms)
@@ -191,12 +216,13 @@ static void statemachine_setTimeout(struct StateMachine * sm, uint32_t ms)
   }
   else {
     // prime timer
-    xTaskCreate(statemachine_triggerTimeout, "State Machine Delay", 256, (void *)ms, tskIDLE_PRIORITY, &timeout_task);
+    xTaskCreate(statemachine_triggerTimeout, "State Machine Delay", 4096, (void *)ms, tskIDLE_PRIORITY, &timeout_task);
   }
 }
 
 static void statemachine_setIo(struct StateMachine * sm, enum PortalIo io, bool active)
 {
+  ESP_LOGI(TAG, "change pin %s to %u", (io == IO_TRIGGER_CLOSE) ? "close" : "open", active);
   (void)sm;
   switch (io) {
   case IO_TRIGGER_CLOSE: io_set_close(active); break;

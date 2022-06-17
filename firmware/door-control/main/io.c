@@ -8,12 +8,13 @@
 #include <freertos/task.h>
 #include <freertos/atomic.h>
 
-#define PIN_OUT_OPEN  GPIO_NUM_39
-#define PIN_OUT_CLOSE GPIO_NUM_15
+#define PIN_OUT_OPEN   GPIO_NUM_15
+#define PIN_OUT_CLOSE  GPIO_NUM_14
+#define PIN_OUT_SIGNAL GPIO_NUM_12
 
-#define PIN_IN_CLOSED GPIO_NUM_20
-#define PIN_IN_LOCKED GPIO_NUM_21
-#define PIN_IN_BUTTON GPIO_NUM_22
+#define PIN_IN_CLOSED GPIO_NUM_39
+#define PIN_IN_LOCKED GPIO_NUM_36
+#define PIN_IN_BUTTON GPIO_NUM_35
 
 static const bool output_active_high = false;
 
@@ -45,6 +46,8 @@ static void handle_gpio_interrupt(void * arg)
 
 void io_init(IoInputChangedCallback callback)
 {
+  ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_EDGE));
+
   ESP_ERROR_CHECK(gpio_config(&output_config));
   ESP_ERROR_CHECK(gpio_config(&input_config));
 
