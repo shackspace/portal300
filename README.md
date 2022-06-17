@@ -126,29 +126,29 @@ portal-daemon  portal-trigger
 Install the [`esp-idf`](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/index.html) by Espressif, then make sure `idf.py` is in your path:
 
 ```sh-session
-[user@host monorepo]$ idf.py  --version
+[user@host portal300]$ idf.py  --version
 ESP-IDF v4.4
-[user@host monorepo]$
+[user@host portal300]$
 ```
 
 Then, you need to build the firmware for `busch-interface` and `door-control`:
 
 ```sh-session
-[user@host monorepo]$ idf.py -C firmware/busch-interface/ build
+[user@host portal300]$ idf.py -C firmware/busch-interface/ build
 
 <-- snip -->
 
 Project build complete. To flash, run this command:
 python ../../../forks/esp-idf/components/esptool_py/esptool/esptool.py -p (PORT) -b 460800 --before default_reset --after hard_reset --chip esp32 write_flash --flash_mode dio --flash_size detect --flash_freq 40m 0x1000 firmware/busch-interface/build/bootloader/bootloader.bin 0x8000 firmware/busch-interface/build/partition_table/partition-table.bin 0x10000 firmware/busch-interface/build/portal300-buzzer.bin
 or run 'idf.py -p (PORT) flash'
-[user@host monorepo]$ idf.py -C firmware/door-control/ build
+[user@host portal300]$ idf.py -C firmware/door-control/ build
 
 <-- snip -->
 
 Project build complete. To flash, run this command:
 python ../../../forks/esp-idf/components/esptool_py/esptool/esptool.py -p (PORT) -b 460800 --before default_reset --after hard_reset --chip esp32 write_flash --flash_mode dio --flash_size detect --flash_freq 40m 0x1000 firmware/door-control/build/bootloader/bootloader.bin 0x8000 firmware/door-control/build/partition_table/partition-table.bin 0x10000 firmware/door-control/build/door-control.bin
 or run 'idf.py -p (PORT) flash'
-[user@host monorepo]$
+[user@host portal300]$
 ```
 
 ## Internal Architecture
