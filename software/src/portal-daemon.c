@@ -34,6 +34,7 @@
 
 struct CliOptions
 {
+  bool         help;
   char const * host_name;
   int          port;
   char const * ca_cert_file;
@@ -83,6 +84,16 @@ static bool send_mqtt_msg(char const * topic, char const * data, size_t data_len
 // static bool disarm_timer(int timer);
 // static bool arm_timer(int timer, bool oneshot, uint32_t ms);
 
+static bool parse_cli(int argc, char ** argv, struct CliOptions * args);
+
+static void print_usage(FILE * stream);
+
+static void panic(char const * msg)
+{
+  log_print(LSS_SYSTEM, LL_ERROR, "\n\nPANIC: %s\n\n\n", msg);
+  exit(EXIT_FAILURE);
+}
+
 int main(int argc, char ** argv)
 {
   // Initialize libraries and dependencies:
@@ -104,13 +115,22 @@ int main(int argc, char ** argv)
 
   (void)argc;
   (void)argv;
-  struct CliOptions const cli = {
-      .host_name       = "mqtt.portal.shackspace.de",
-      .port            = 8883,
-      .ca_cert_file    = "debug/ca.crt",
-      .client_key_file = "debug/client.key",
-      .client_crt_file = "debug/client.crt",
-  };
+  // struct CliOptions const cli = {
+  //     .host_name       = "mqtt.portal.shackspace.de",
+  //     .port            = 8883,
+  //     .ca_cert_file    = "debug/ca.crt",
+  //     .client_key_file = "debug/client.key",
+  //     .client_crt_file = "debug/client.crt",
+  // };
+  struct CliOptions cli;
+  if (!parse_cli(argc, argv, &cli)) {
+    return EXIT_FAILURE;
+  }
+
+  if (cli.help) {
+    print_usage(stdout);
+    return EXIT_SUCCESS;
+  }
 
   // Create MQTT client from CLI info
   mqtt_client = mqtt_client_create(
@@ -647,4 +667,126 @@ static bool fetch_timer_fd(int fd)
     return false;
   }
   return true;
+}
+
+static bool parse_cli(int argc, char ** argv, struct CliOptions * args)
+{
+  *args = (struct CliOptions){
+      .help            = false,
+      .host_name       = "mqtt.portal.shackspace.de",
+      .port            = 8883,
+      .ca_cert_file    = NULL,
+      .client_key_file = NULL,
+      .client_crt_file = NULL,
+  };
+
+  {
+    int opt;
+    while ((opt = getopt(argc, argv, "hH:p:k:c:C:")) != -1) {
+      switch (opt) {
+
+      case 'h':
+      { // help
+        args->help = true;
+        return true;
+      }
+
+      case 'H':
+      { // Host
+        args->host_name = strdup(optarg);
+        if (args->host_name == NULL) {
+          panic("out of memory");
+        }
+        break;
+      }
+
+      case 'p':
+      { // port
+        errno          = 0;
+        char * end_ptr = optarg;
+        args->port     = strtol(optarg, &end_ptr, 10);
+        if ((errno != 0) || (end_ptr != (optarg + strlen(optarg))) || (args->port <= 0) || (args->port >= 65535)) {
+          fprintf(stderr, "invalid port number: %s\n", optarg);
+          return false;
+        }
+
+        break;
+      }
+
+      case 'k':
+      {
+        // client certificate key file
+        args->client_key_file = strdup(optarg);
+        if (args->client_key_file == NULL) {
+          panic("out of memory");
+        }
+        break;
+      }
+
+      case 'c':
+      {
+        // client certificate file
+        args->client_crt_file = strdup(optarg);
+        if (args->client_crt_file == NULL) {
+          panic("out of memory");
+        }
+        break;
+      }
+
+      case 'C':
+      { // ca certificate file
+        args->ca_cert_file = strdup(optarg);
+        if (args->ca_cert_file == NULL) {
+          panic("out of memory");
+        }
+        break;
+      }
+
+      default:
+      {
+        // unknown argument, error message is already printed by getopt
+        return false;
+      }
+      }
+    }
+  }
+
+  if (optind != argc) {
+    print_usage(stderr);
+    return false;
+  }
+
+  bool params_ok = true;
+
+  if (args->ca_cert_file == NULL) {
+    fprintf(stderr, "Missing option -C\n");
+    params_ok = false;
+  }
+  if (args->client_crt_file == NULL) {
+    fprintf(stderr, "Missing option -c\n");
+    params_ok = false;
+  }
+  if (args->client_key_file == NULL) {
+    fprintf(stderr, "Missing option -k\n");
+    params_ok = false;
+  }
+  if (args->host_name == NULL) {
+    fprintf(stderr, "Missing option -H\n");
+    params_ok = false;
+  }
+
+  if (params_ok == false) {
+    return false;
+  }
+
+  return true;
+}
+
+static void print_usage(FILE * stream)
+{
+  static const char usage_msg[] =
+      "portal-daemon [-h] -H <host> -C <ca certificate> -c <client certificate> -k <client key>\n"
+      "TODO!\n";
+
+  fprintf(stream, usage_msg);
 }
