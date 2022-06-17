@@ -14,4 +14,4 @@ openssl dgst \
   -signature /mnt/keymembers.json.sig \
   /mnt/keymembers.json
 
-Verified OK
+echo "Verified OK"
