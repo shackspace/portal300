@@ -33,7 +33,6 @@ static bool parse_cli(int argc, char ** argv, struct PortalArgs * args);
 
 static int connecToDaemon(void);
 
-
 static int ipc_socket = -1;
 static void close_ipc_socket(void);
 
