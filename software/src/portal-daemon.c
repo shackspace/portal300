@@ -191,6 +191,11 @@ int main(int argc, char ** argv)
         .events  = POLLIN,
         .revents = 0,
     };
+
+    if (!ipc_set_flags(ipc_sock)) {
+      log_perror(LSS_IPC, LL_ERROR, "failed to change permissions on ipc socket");
+      return EXIT_FAILURE;
+    }
   }
 
   while (shutdown_requested == false) {
@@ -306,13 +311,25 @@ int main(int argc, char ** argv)
               case IPC_MSG_OPEN_BACK:
               case IPC_MSG_OPEN_FRONT:
               {
+                bool ok;
                 log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal opening via %s for (%d, '%.*s', '%.*s').", i, (msg.type == IPC_MSG_OPEN_BACK) ? "back door" : "front door", msg.data.open.member_id, (int)strnlen(msg.data.open.member_nick, sizeof msg.data.open.member_nick), msg.data.open.member_nick, (int)strnlen(msg.data.open.member_name, sizeof msg.data.open.member_name), msg.data.open.member_name);
 
                 // TODO: Handle open message
 
                 send_ipc_infof(pfd.fd, "Portal wird geöffnet, bitte warten...");
 
-                bool ok = send_mqtt_msg(
+                // Open outer door
+                ok = send_mqtt_msg(
+                    PORTAL300_TOPIC_ACTION_OPEN_DOOR,
+                    (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_C : DOOR_B);
+                if (!ok) {
+                  send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen!");
+                  remove_ipc_client(i);
+                  break;
+                }
+
+                // Open inner door
+                ok = send_mqtt_msg(
                     PORTAL300_TOPIC_ACTION_OPEN_DOOR,
                     (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_C2 : DOOR_B2);
                 if (!ok) {

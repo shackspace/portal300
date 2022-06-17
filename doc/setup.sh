@@ -4,9 +4,29 @@ apt install mosquitto jq
 
 # install portal software
 useradd portal-daemon # add daemon user
+
 mkdir /opt/portal300  # base folder for everything
 
 git clone https://github.com/shackspace/portal300
+
+make -C portal300 install
+
+echo '[Unit]
+Description=Portal Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+User=portal-daemon
+Type=simple
+ExecStart=/opt/portal300/portal-daemon -C /etc/mosquitto/ca_certificates/shack-portal.crt -c /opt/portal300/daemon.crt -k /opt/portal300/daemon.key
+Restart=always
+
+[Install]
+WantedBy=multi-user.target' > /etc/systemd/system/portal-daemon.service
+
+systemctl enable portal-daemon
+systemctl start portal-daemon
 
 # install mosquitto
 echo '# Configuration for shackspace Portal 300
@@ -39,7 +59,12 @@ done
 # disable access for any "rogue" users:
 echo 'AllowUsers open-front open-back close root' >> /etc/ssh/sshd_config
 
-
+# Put all IPC users into the same group
+groupadd portal-ipc
+gpasswd -a portal-daemon portal-ipc
+gpasswd -a open-front portal-ipc
+gpasswd -a open-back portal-ipc
+gpasswd -a close portal-ipc
 
 # command="",no-port-forwarding,no-X11-forwarding,no-agent-forwarding ${key}
 #

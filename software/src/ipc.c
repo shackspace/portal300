@@ -3,6 +3,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <grp.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -22,11 +24,23 @@ int ipc_create_socket()
     log_perror(LSS_IPC, LL_ERROR, "failed to create ipc socket");
     return -1;
   }
-  // Make socket readable/writeable by everyone
-  if (fchmod(sock, 0666) == -1) {
-    log_perror(LSS_IPC, LL_ERROR, "failed to create ipc socket");
-  }
+
   return sock;
+}
+
+bool ipc_set_flags(int sock)
+{
+  // we use chmod because fchmod doesn't seem to work on sockets.
+  (void)sock;
+
+  // Make socket readable/writeable by group/owner
+  static mode_t const mode = 0666;
+  if (chmod(ipc_socket_address.sun_path, mode) == -1) {
+    log_perror(LSS_IPC, LL_ERROR, "failed to set permission for IPC socket");
+    return false;
+  }
+
+  return true;
 }
 
 bool ipc_send_msg(int sock, struct IpcMessage msg)

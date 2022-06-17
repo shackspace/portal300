@@ -54,6 +54,10 @@ extern const struct sockaddr_un ipc_socket_address;
 //! Returns -1 on error, otherwise a file handle.
 int ipc_create_socket(void);
 
+//! Must be called after successfully binding the socket so
+//! the permissions of the socket are correct.
+bool ipc_set_flags(int fd);
+
 //! Sends an ipc message via the given socket
 //! returns true on success.
 bool ipc_send_msg(int sock, struct IpcMessage msg);
