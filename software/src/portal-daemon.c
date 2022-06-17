@@ -78,6 +78,8 @@ static bool send_ipc_infof(int fd, char const * fmt, ...) __attribute__((format(
 
 static bool fetch_timer_fd(int fd);
 
+static bool send_mqtt_msg(char const * topic, char const * data, size_t data_length);
+
 // static bool disarm_timer(int timer);
 // static bool arm_timer(int timer, bool oneshot, uint32_t ms);
 
@@ -287,6 +289,16 @@ int main(int argc, char ** argv)
 
                 send_ipc_infof(pfd.fd, "Portal wird geöffnet, bitte warten...");
 
+                bool ok = send_mqtt_msg(
+                    PORTAL300_TOPIC_ACTION_OPEN_DOOR,
+                    (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_C2 : DOOR_B2,
+                    0);
+                if (!ok) {
+                  send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen!");
+                  remove_ipc_client(i);
+                  break;
+                }
+
                 break;
               }
 
@@ -430,12 +442,21 @@ static bool try_connect_mqtt()
   return true;
 }
 
+/// Sends a mqtt message.
+/// - `topic` is a NUL terminated string.
+/// - `data` is a pointer to the message payload.
+/// - `data_length` is either 0 for a NUL terminated payload or the length of the payload in bytes.
 static bool send_mqtt_msg(char const * topic, char const * data, size_t data_length)
 {
   assert(topic != NULL);
   assert(data != NULL);
   if (data_length == 0) {
     data_length = strlen(data);
+  }
+
+  if (!mqtt_client_is_connected(mqtt_client)) {
+    log_print(LSS_MQTT, LL_ERROR, "failed to publish message to mqtt server: not connected.");
+    return false;
   }
 
   if (!mqtt_client_publish(mqtt_client, topic, "Hello, World!", 2)) {
