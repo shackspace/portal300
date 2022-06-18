@@ -71,6 +71,7 @@ static void mqtt_event_handler(void * handler_args, esp_event_base_t base, int32
   case MQTT_EVENT_CONNECTED:
     xEventGroupSetBits(event_group, EVENT_CONNECTED_BIT);
     ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+
     msg_id = esp_mqtt_client_publish(client, device_status_topic, STATUS_ONLINE, 0, 2, 0); // exactly once
     ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
 

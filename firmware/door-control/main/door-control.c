@@ -1,6 +1,7 @@
 #include <portal300/mqtt.h>
 #include <portal300/ethernet.h>
 #include <portal300.h>
+#include "freertos/portmacro.h"
 #include "freertos/projdefs.h"
 #include "io.h"
 #include "portal300.h"
@@ -15,13 +16,16 @@
 // Configuration:
 
 // The door we are attached to
-#define CURRENT_DOOR   DOOR_B2
-#define CURRENT_DEVICE DOOR_CONTROL_B2
+#define CURRENT_DOOR         DOOR_B2
+#define CURRENT_DEVICE       DOOR_CONTROL_B2
+#define BUTTON_DEBOUNCE_TIME 1000 // ms, can be pretty high for less button mashing
 
 /////////////////////////////////////////////////////////////////////
 
-#define STATUS_TOPIC_INNER(_Name) PORTAL300_TOPIC_STATUS_##_Name
-#define STATUS_TOPIC(_Name)       STATUS_TOPIC_INNER(_Name)
+#define MERGE_TOPIC_INNER(_Space, _Name) _Space##_Name
+
+#define SYSTEM_STATUS_TOPIC(_Name) MERGE_TOPIC_INNER(PORTAL300_TOPIC_STATUS_, _Name)
+#define DOOR_STATUS_TOPIC(_Name)   MERGE_TOPIC_INNER(PORTAL300_TOPIC_STATUS_DOOR_, _Name)
 
 #define TAG "application logic"
 
@@ -40,9 +44,9 @@ static void on_mqtt_data_received(struct MqttEvent const * event);
 
 static const struct MqttConfig mqtt_config = {
     .host_name = "mqtt.portal.shackspace.de",
-    .client_id = "portal.control." CURRENT_DOOR,
+    .client_id = "portal.control." DOOR_NAME(CURRENT_DOOR),
 
-    .device_status_topic = STATUS_TOPIC(CURRENT_DEVICE),
+    .device_status_topic = SYSTEM_STATUS_TOPIC(CURRENT_DEVICE),
 
     .client_crt = client_crt,
     .client_key = client_key,
@@ -53,8 +57,6 @@ static const struct MqttConfig mqtt_config = {
 };
 
 static TaskHandle_t timeout_task = NULL;
-
-struct StateMachine core_logic;
 
 static void statemachine_signal(struct StateMachine * sm,
                                 enum PortalSignal     signal);
@@ -90,16 +92,30 @@ static enum PortalError log_sm_error(enum PortalError err)
   return err;
 }
 
+static void publish_door_status(enum DoorState state)
+{
+  char const * state_msg = "invalid";
+  switch (state) {
+  case DOOR_OPEN: state_msg = PORTAL300_STATUS_DOOR_OPENED; break;
+  case DOOR_LOCKED: state_msg = PORTAL300_STATUS_DOOR_LOCKED; break;
+  case DOOR_CLOSED: state_msg = PORTAL300_STATUS_DOOR_CLOSED; break;
+  case DOOR_FAULT: state_msg = "fault"; break;
+  }
+  mqtt_pub(DOOR_STATUS_TOPIC(CURRENT_DOOR), state_msg);
+}
+
 void app_main(void)
 {
   event_group = xEventGroupCreate();
 
+  io_init(io_changed_level);
+
   ethernet_init();
   mqtt_init(&mqtt_config);
-  io_init(io_changed_level);
 
   enum DoorState door_state = get_door_state();
 
+  struct StateMachine core_logic;
   sm_init(&core_logic,
           door_state,
           statemachine_signal,
@@ -107,32 +123,60 @@ void app_main(void)
           statemachine_setIo,
           NULL);
 
+  TickType_t last_button_press_time = xTaskGetTickCount();
+  bool       button_pressed         = false;
+
   while (1) {
     EventBits_t const current_state = xEventGroupWaitBits(
         event_group,
         EVENT_SM_TIMEOUT_BIT | EVENT_SM_IO_CHANGED_BIT | EVENT_SM_CLOSE_REQUEST | EVENT_SM_OPEN_REQUEST,
-        pdTRUE,                    // clear on return
-        pdFALSE,                   // return as soon as one bit was set
-        10000 / portTICK_PERIOD_MS // wait some time
+        pdTRUE,                  // clear on return
+        pdFALSE,                 // return as soon as one bit was set
+        100 / portTICK_PERIOD_MS // wait some time
     );
 
-    ESP_LOGI(TAG, "Events happened: %02X", current_state);
+    if (current_state != 0) {
+      ESP_LOGI(TAG, "Events happened: %02X", current_state);
+    }
+
+    // always forward pin changes
+    if (current_state & EVENT_SM_IO_CHANGED_BIT) {
+      enum DoorState new_state = get_door_state();
+
+      if (new_state != door_state) {
+        door_state = new_state;
+        publish_door_status(door_state);
+
+        char const * state = "unknown";
+        switch (door_state) {
+        case DOOR_CLOSED: state = "closed"; break;
+        case DOOR_LOCKED: state = "locked"; break;
+        case DOOR_OPEN: state = "open"; break;
+        case DOOR_FAULT: state = "fault"; break;
+        }
+        ESP_LOGI(TAG, "forwarding io pin change to door status locked=%u, closed=%u, state=%s", io_get_locked(), io_get_closed(), state);
+        sm_change_door_state(&core_logic, door_state);
+      }
+
+      bool btn_state = io_get_button();
+      if (btn_state != button_pressed) {
+        button_pressed = btn_state;
+        if (button_pressed) {
+
+          TickType_t current_time = xTaskGetTickCount();
+
+          if (current_time - last_button_press_time >= BUTTON_DEBOUNCE_TIME / portTICK_PERIOD_MS) {
+            last_button_press_time = current_time;
+
+            mqtt_pub(PORTAL300_TOPIC_EVENT_CLOSE_REQUEST, DOOR_NAME(CURRENT_DOOR));
+          }
+        }
+      }
+    }
 
     if (current_state & EVENT_SM_TIMEOUT_BIT) {
       ESP_LOGI(TAG, "forwarding timeout to state machine.");
       log_sm_error(sm_send_event(&core_logic, EVENT_TIMEOUT));
-    }
-    if (current_state & EVENT_SM_IO_CHANGED_BIT) {
-      door_state         = get_door_state();
-      char const * state = "unknown";
-      switch (door_state) {
-      case DOOR_CLOSED: state = "closed"; break;
-      case DOOR_LOCKED: state = "locked"; break;
-      case DOOR_OPEN: state = "open"; break;
-      case DOOR_FAULT: state = "fault"; break;
-      }
-      ESP_LOGI(TAG, "forwarding io pin change to door status locked=%u, closed=%u, state=%s", io_get_locked(), io_get_closed(), state);
-      sm_change_door_state(&core_logic, door_state);
     }
     if (current_state & EVENT_SM_CLOSE_REQUEST) {
       ESP_LOGI(TAG, "forwarding open request to state machine.");
@@ -149,18 +193,21 @@ static void on_mqtt_connect(void)
 {
   mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR);
   mqtt_subscribe(PORTAL300_TOPIC_ACTION_CLOSE_DOOR);
+
+  enum DoorState door_state = get_door_state();
+  publish_door_status(door_state);
 }
 
 static void on_mqtt_data_received(struct MqttEvent const * event)
 {
   if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_OPEN_DOOR)) {
-    if (mqtt_event_has_data(event, CURRENT_DOOR)) {
+    if (mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
       ESP_LOGI(TAG, "Received open command");
       xEventGroupSetBits(event_group, EVENT_SM_OPEN_REQUEST);
     }
   }
   else if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_CLOSE_DOOR)) {
-    if (mqtt_event_has_data(event, CURRENT_DOOR)) {
+    if (mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
       ESP_LOGI(TAG, "Received close command");
       xEventGroupSetBits(event_group, EVENT_SM_CLOSE_REQUEST);
     }
@@ -189,7 +236,6 @@ static void statemachine_signal(struct StateMachine * sm, enum PortalSignal sign
 
 static void io_changed_level(void)
 {
-  ESP_LOGI(TAG, "IOs changed level");
   xEventGroupSetBits(event_group, EVENT_SM_IO_CHANGED_BIT);
 }
 

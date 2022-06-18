@@ -61,7 +61,7 @@ void app_main(void)
     if (io_was_doorbell_triggered()) {
       if (is_mqtt_connected()) {
         ESP_LOGI(TAG, "The doorbell was rang, sending MQTT message.");
-        mqtt_pub(PORTAL300_TOPIC_EVENT_DOORBELL, CURRENT_DOOR);
+        mqtt_pub(PORTAL300_TOPIC_EVENT_DOORBELL, DOOR_NAME(CURRENT_DOOR));
       }
       else {
         ESP_LOGI(TAG, "The doorbell was rang, but there's nobody here to listen.");
@@ -85,7 +85,7 @@ static void on_mqtt_connect(void)
 static void on_mqtt_data_received(struct MqttEvent const * event)
 {
   if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_OPEN_DOOR)) {
-    if (mqtt_event_has_data(event, CURRENT_DOOR)) {
+    if (mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
       signal_door_open();
     }
   }
