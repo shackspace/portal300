@@ -6,6 +6,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct MqttClient;
+
+typedef void (*MqttMessageCallback)(void * user_param, char const * topic, char const * data);
+
 struct MqttClient
 {
   // stored configuration
@@ -14,6 +18,8 @@ struct MqttClient
   struct ssl_ctx_st * ctx;
   char *              lw_topic;
   char *              lw_data;
+  void *              user_param;
+  MqttMessageCallback on_message;
 
   // runtime status
   bool               connected;
@@ -36,13 +42,15 @@ bool mqtt_client_init(void);
 //! - `client_key` is the path to the private key of the client certificate.
 //! - `client_cert` is the path to the client certificate.
 struct MqttClient * mqtt_client_create(
-    char const * host_name,
-    int          port,
-    char const * ca_cert,
-    char const * client_key,
-    char const * client_cert,
-    char const * last_will_topic,
-    char const * last_will_message);
+    char const *        host_name,
+    int                 port,
+    char const *        ca_cert,
+    char const *        client_key,
+    char const *        client_cert,
+    char const *        last_will_topic,
+    char const *        last_will_message,
+    MqttMessageCallback on_message,
+    void *              user_param);
 
 //! Destroys a previously allocated MQTT client.
 void mqtt_client_destroy(struct MqttClient * client);

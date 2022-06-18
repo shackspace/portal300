@@ -42,6 +42,40 @@ struct CliOptions
   char const * client_crt_file;
 };
 
+struct DeviceStatus
+{
+  bool ssh_interface;
+  bool door_control_b2;
+  bool door_control_c2;
+  bool busch_interface;
+};
+
+enum DoorStatus
+{
+  DOOR_UNOBSERVED,
+  DOOR_OPEN,
+  DOOR_CLOSED,
+  DOOR_LOCKED,
+};
+
+struct DoorStates
+{
+  enum DoorStatus b2;
+  enum DoorStatus c2;
+};
+
+static struct DoorStates door_state = {
+    .b2 = DOOR_UNOBSERVED,
+    .c2 = DOOR_UNOBSERVED,
+};
+
+static struct DeviceStatus device_status = {
+    .ssh_interface   = true, // we're always online
+    .door_control_b2 = false,
+    .door_control_c2 = false,
+    .busch_interface = false,
+};
+
 static volatile sig_atomic_t shutdown_requested = 0;
 
 static int ipc_sock = -1;
@@ -81,6 +115,8 @@ static bool fetch_timer_fd(int fd);
 
 static bool send_mqtt_msg(char const * topic, char const * data);
 
+static void mqtt_handle_message(void * user_data, char const * topic, char const * data);
+
 // static bool disarm_timer(int timer);
 // static bool arm_timer(int timer, bool oneshot, uint32_t ms);
 
@@ -88,11 +124,32 @@ static bool parse_cli(int argc, char ** argv, struct CliOptions * args);
 
 static void print_usage(FILE * stream);
 
+static char const * door_status_name(enum DoorStatus status);
+
 static void panic(char const * msg)
 {
   log_print(LSS_SYSTEM, LL_ERROR, "\n\nPANIC: %s\n\n\n", msg);
   exit(EXIT_FAILURE);
 }
+
+//! Returns `true` only when the shackspace was fully unlocked
+static bool is_shack_open_safe(void)
+{
+  // TODO: integrate shackspace back door
+  // return (door_state.b2 != DOOR_LOCKED) && (door_state.b2 != DOOR_UNOBSERVED) && (door_state.c2 != DOOR_LOCKED) && (door_state.c2 != DOOR_UNOBSERVED);
+  return (door_state.b2 != DOOR_LOCKED) && (door_state.b2 != DOOR_UNOBSERVED);
+}
+
+//! Returns `true` when it's possible to enter the space.
+static bool is_shack_open_unsafe(void)
+{
+  // TODO: integrate shackspace back door
+  // || (door_state.c2 != DOOR_LOCKED)
+  return (door_state.b2 != DOOR_LOCKED);
+}
+
+//! When set to true, the door will be unlocked in the next loop
+static bool trigger_unlock_door = false;
 
 int main(int argc, char ** argv)
 {
@@ -115,6 +172,7 @@ int main(int argc, char ** argv)
 
   (void)argc;
   (void)argv;
+
   // struct CliOptions const cli = {
   //     .host_name       = "mqtt.portal.shackspace.de",
   //     .port            = 8883,
@@ -122,6 +180,7 @@ int main(int argc, char ** argv)
   //     .client_key_file = "debug/client.key",
   //     .client_crt_file = "debug/client.crt",
   // };
+
   struct CliOptions cli;
   if (!parse_cli(argc, argv, &cli)) {
     return EXIT_FAILURE;
@@ -140,7 +199,9 @@ int main(int argc, char ** argv)
       cli.client_key_file,
       cli.client_crt_file,
       PORTAL300_TOPIC_STATUS_SSH_INTERFACE,
-      "offline");
+      "offline",
+      mqtt_handle_message,
+      NULL);
   if (mqtt_client == NULL) {
     log_write(LSS_MQTT, LL_ERROR, "failed to create mqtt client.");
     return EXIT_FAILURE;
@@ -199,6 +260,16 @@ int main(int argc, char ** argv)
   }
 
   while (shutdown_requested == false) {
+
+    if (trigger_unlock_door) {
+      trigger_unlock_door = false;
+
+      log_print(LSS_SYSTEM, LL_MESSAGE, "Unlocking front door.");
+
+      // Wenn der shack aktuell sicher "offen" ist, senden wir eine Nachricht an die Fronttüre:
+      send_mqtt_msg(PORTAL300_TOPIC_ACTION_OPEN_DOOR, "door.B");
+    }
+
     // sync the mqtt client to send some leftovers
     mqtt_client_sync(mqtt_client);
 
@@ -321,7 +392,7 @@ int main(int argc, char ** argv)
                 // Open outer door
                 ok = send_mqtt_msg(
                     PORTAL300_TOPIC_ACTION_OPEN_DOOR,
-                    (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_C : DOOR_B);
+                    (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_NAME(DOOR_C) : DOOR_NAME(DOOR_B));
                 if (!ok) {
                   send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen!");
                   remove_ipc_client(i);
@@ -331,7 +402,7 @@ int main(int argc, char ** argv)
                 // Open inner door
                 ok = send_mqtt_msg(
                     PORTAL300_TOPIC_ACTION_OPEN_DOOR,
-                    (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_C2 : DOOR_B2);
+                    (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_NAME(DOOR_C2) : DOOR_NAME(DOOR_B2));
                 if (!ok) {
                   send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen!");
                   remove_ipc_client(i);
@@ -343,11 +414,31 @@ int main(int argc, char ** argv)
 
               case IPC_MSG_CLOSE:
               {
+                bool ok;
                 log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal close.", i);
 
                 // TODO: Handle close message
 
                 send_ipc_infof(pfd.fd, "Portal wird geschlossen, bitte warten...");
+
+                // Close both doors
+                ok = send_mqtt_msg(
+                    PORTAL300_TOPIC_ACTION_CLOSE_DOOR,
+                    DOOR_NAME(DOOR_C2));
+                if (!ok) {
+                  send_ipc_infof(pfd.fd, "Konnte Portal nicht abschließen!");
+                  remove_ipc_client(i);
+                  break;
+                }
+
+                ok = send_mqtt_msg(
+                    PORTAL300_TOPIC_ACTION_CLOSE_DOOR,
+                    DOOR_NAME(DOOR_B2));
+                if (!ok) {
+                  send_ipc_infof(pfd.fd, "Konnte Portal nicht abschließen!");
+                  remove_ipc_client(i);
+                  break;
+                }
 
                 break;
               }
@@ -367,11 +458,17 @@ int main(int argc, char ** argv)
                 log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal status.", i);
 
                 (void)send_ipc_infof(pfd.fd, "Portal-Status:");
-                (void)send_ipc_infof(pfd.fd, "  Aktivität:     %s", "???"); // idle, öffnen, schließen
-                (void)send_ipc_infof(pfd.fd, "  MQTT:          %s", mqtt_client_is_connected(mqtt_client) ? "Verbunden" : "Nicht verbunden");
-                (void)send_ipc_infof(pfd.fd, "  IPC Clients:   %zu", pollfds_size - POLLFD_FIRST_IPC);
-                (void)send_ipc_infof(pfd.fd, "  Schließbolzen: %s", "???"); // geöffnet, geschlossen
-                (void)send_ipc_infof(pfd.fd, "  Türsensor:     %s", "???"); // geöffnet, geschlossen
+                (void)send_ipc_infof(pfd.fd, "  Aktivität:       %s", "???"); // idle, öffnen, schließen
+                (void)send_ipc_infof(pfd.fd, "  MQTT:            %s", mqtt_client_is_connected(mqtt_client) ? "Verbunden" : "Nicht verbunden");
+                (void)send_ipc_infof(pfd.fd, "  IPC Clients:     %zu", (pollfds_size - POLLFD_FIRST_IPC));
+                (void)send_ipc_infof(pfd.fd, "Tür-Status:");
+                (void)send_ipc_infof(pfd.fd, "  B2:              %s", door_status_name(door_state.b2)); // geöffnet, geschlossen
+                (void)send_ipc_infof(pfd.fd, "  C2:              %s", door_status_name(door_state.c2)); // geöffnet, geschlossen
+                (void)send_ipc_infof(pfd.fd, "Geräte-Status:");
+                (void)send_ipc_infof(pfd.fd, "  ssh_interface:   %s", device_status.ssh_interface ? "online" : "offline");
+                (void)send_ipc_infof(pfd.fd, "  door_control_b2: %s", device_status.door_control_b2 ? "online" : "offline");
+                (void)send_ipc_infof(pfd.fd, "  door_control_c2: %s", device_status.door_control_c2 ? "online" : "offline");
+                (void)send_ipc_infof(pfd.fd, "  busch_interface: %s", device_status.busch_interface ? "online" : "offline");
                 (void)send_ipc_info(pfd.fd, "");
                 (void)send_ipc_infof(pfd.fd, "Das Portal ist noch nicht vollständig implementiert. Auf Wiedersehen!");
 
@@ -501,6 +598,76 @@ static bool send_mqtt_msg(char const * topic, char const * data)
   }
 
   return true;
+}
+
+static bool streq(char const * a, char const * b)
+{
+  return (strcmp(a, b) == 0);
+}
+
+static bool parse_system_status(char const * status)
+{
+  if (streq(status, PORTAL300_STATUS_SYSTEM_ONLINE))
+    return true;
+  if (streq(status, PORTAL300_STATUS_SYSTEM_OFFLINE))
+    return false;
+  log_print(LSS_SYSTEM, LL_WARNING, "Received invalid system status: '%s'", status);
+  return false;
+}
+
+static enum DoorStatus parse_door_status(char const * status)
+{
+  if (streq(status, PORTAL300_STATUS_DOOR_LOCKED))
+    return DOOR_LOCKED;
+  if (streq(status, PORTAL300_STATUS_DOOR_CLOSED))
+    return DOOR_CLOSED;
+  if (streq(status, PORTAL300_STATUS_DOOR_OPENED))
+    return DOOR_OPEN;
+  log_print(LSS_SYSTEM, LL_WARNING, "Received invalid door status: '%s'", status);
+  return DOOR_UNOBSERVED;
+}
+
+//! Handles all incoming MQTT messages
+static void mqtt_handle_message(void * user_data, char const * topic, char const * data)
+{
+  (void)user_data;
+
+  if (streq(topic, PORTAL300_TOPIC_EVENT_DOORBELL)) {
+    if (is_shack_open_safe()) {
+      log_print(LSS_SYSTEM, LL_MESSAGE, "Priming front door unlock.");
+      trigger_unlock_door = true;
+    }
+    else {
+      log_print(LSS_SYSTEM, LL_WARNING, "Received doorbell event outside opening times.");
+    }
+  }
+  else if (streq(topic, PORTAL300_TOPIC_STATUS_DOOR_B2)) {
+    door_state.b2 = parse_door_status(data);
+    log_print(LSS_SYSTEM, LL_MESSAGE, "door B2 is now %s", door_status_name(door_state.b2));
+  }
+  else if (streq(topic, PORTAL300_TOPIC_STATUS_DOOR_C2)) {
+    door_state.c2 = parse_door_status(data);
+    log_print(LSS_SYSTEM, LL_MESSAGE, "door C2 is now %s", door_status_name(door_state.c2));
+  }
+  else if (streq(topic, PORTAL300_TOPIC_STATUS_SSH_INTERFACE)) {
+    device_status.ssh_interface = parse_system_status(data);
+    log_print(LSS_SYSTEM, LL_MESSAGE, "device 'ssh interface' is now %s", device_status.ssh_interface ? "online" : "offline");
+  }
+  else if (streq(topic, PORTAL300_TOPIC_STATUS_DOOR_CONTROL_B2)) {
+    device_status.door_control_b2 = parse_system_status(data);
+    log_print(LSS_SYSTEM, LL_MESSAGE, "device 'door control b2' is now %s", device_status.door_control_b2 ? "online" : "offline");
+  }
+  else if (streq(topic, PORTAL300_TOPIC_STATUS_DOOR_CONTROL_C2)) {
+    device_status.door_control_c2 = parse_system_status(data);
+    log_print(LSS_SYSTEM, LL_MESSAGE, "device 'door control c2' is now %s", device_status.door_control_c2 ? "online" : "offline");
+  }
+  else if (streq(topic, PORTAL300_TOPIC_STATUS_BUSCH_INTERFACE)) {
+    device_status.busch_interface = parse_system_status(data);
+    log_print(LSS_SYSTEM, LL_MESSAGE, "device 'busch interface' is now %s", device_status.busch_interface ? "online" : "offline");
+  }
+  else {
+    log_print(LSS_SYSTEM, LL_WARNING, "Received data for unhandled topic '%s': %s", topic, data);
+  }
 }
 
 static bool install_signal_handlers()
@@ -805,4 +972,15 @@ static void print_usage(FILE * stream)
       "TODO!\n";
 
   fprintf(stream, usage_msg);
+}
+
+static char const * door_status_name(enum DoorStatus status)
+{
+  static const char * const door_names[] = {
+      [DOOR_LOCKED]     = "abgeschlossen",
+      [DOOR_CLOSED]     = "geschlossen",
+      [DOOR_OPEN]       = "offen",
+      [DOOR_UNOBSERVED] = "unbekannt",
+  };
+  return door_names[status];
 }

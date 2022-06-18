@@ -50,15 +50,18 @@ int mqtt_client_get_socket_fd(struct MqttClient * client)
 }
 
 struct MqttClient * mqtt_client_create(
-    char const * host_name,
-    int          port,
-    char const * ca_cert,
-    char const * client_key,
-    char const * client_cert,
-    char const * last_will_topic,
-    char const * last_will_message)
+    char const *        host_name,
+    int                 port,
+    char const *        ca_cert,
+    char const *        client_key,
+    char const *        client_cert,
+    char const *        last_will_topic,
+    char const *        last_will_message,
+    MqttMessageCallback on_message,
+    void *              user_param)
 {
   assert(host_name != NULL);
+  assert(on_message != NULL);
   assert(port > 0 && port <= 65535);
   assert((last_will_topic != NULL) == (last_will_message != NULL)); // only allow both last will params or none.
 
@@ -75,6 +78,9 @@ struct MqttClient * mqtt_client_create(
       .ctx           = NULL,
       .lw_topic      = last_will_topic ? strdup(last_will_topic) : NULL,
       .lw_data       = last_will_message ? strdup(last_will_message) : NULL,
+
+      .on_message = on_message,
+      .user_param = user_param,
 
       .connected = false,
       .socket    = -1,
@@ -154,19 +160,55 @@ void mqtt_client_destroy(struct MqttClient * client)
   free(client);
 }
 
-static void publish_callback(void ** unused, struct mqtt_response_publish * published)
+static void publish_callback(void ** user_param_pointer, struct mqtt_response_publish * published)
 {
-  (void)unused;
-  (void)published;
-  log_write(LSS_MQTT, LL_MESSAGE, "publish callback was triggered!");
-  log_print(LSS_MQTT, LL_MESSAGE,
-            "published data:\n"
-            "  topic: %.*s\n"
-            "  data:  %.*s",
-            (int)published->topic_name_size,
-            (char const *)published->topic_name,
-            (int)published->application_message_size,
-            (char const *)published->application_message);
+  assert(user_param_pointer != NULL);
+
+  struct MqttClient * client = *user_param_pointer;
+  assert(client != NULL);
+
+  // TODO: Adjust when needed
+  char topic_buffer[256];
+  char data_buffer[256];
+
+  if (published->topic_name_size >= sizeof(topic_buffer) - 1) {
+    log_print(LSS_MQTT, LL_WARNING, "Received topic too large: %u", published->topic_name_size);
+    return;
+  }
+  if (published->application_message_size >= sizeof(data_buffer) - 1) {
+    log_print(LSS_MQTT, LL_WARNING, "Received application data too large: %zu", published->application_message_size);
+    return;
+  }
+
+  if (client->on_message != NULL) {
+
+    memset(topic_buffer, 0, sizeof(topic_buffer));
+    memset(data_buffer, 0, sizeof(data_buffer));
+
+    assert(published->topic_name_size < sizeof(topic_buffer));
+    assert(published->application_message_size < sizeof(data_buffer));
+
+    memcpy(topic_buffer, published->topic_name, published->topic_name_size);
+    memcpy(data_buffer, published->application_message, published->application_message_size);
+
+    assert(topic_buffer[published->topic_name_size] == 0);
+    assert(data_buffer[published->application_message_size] == 0);
+
+    client->on_message(
+        client->user_param,
+        topic_buffer,
+        data_buffer);
+  }
+  else {
+    log_print(LSS_MQTT, LL_MESSAGE,
+              "mqtt message received:\n"
+              "  topic: %.*s\n"
+              "  data:  %.*s",
+              (int)published->topic_name_size,
+              (char const *)published->topic_name,
+              (int)published->application_message_size,
+              (char const *)published->application_message);
+  }
 }
 
 static int connect_socket_to(char const * host_name, int port)
@@ -274,9 +316,10 @@ bool mqtt_client_connect(struct MqttClient * client)
     goto _error_deinit_mqtt;
   }
 
-  client->ssl       = ssl;
-  client->socket    = sockfd;
-  client->connected = true;
+  client->ssl                                    = ssl;
+  client->socket                                 = sockfd;
+  client->client.publish_response_callback_state = client;
+  client->connected                              = true;
 
   return true;
 
