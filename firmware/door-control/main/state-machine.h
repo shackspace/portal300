@@ -5,24 +5,28 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum DoorState {
+enum DoorState
+{
   DOOR_CLOSED = 0, // open=0, locked=0
   DOOR_LOCKED = 1, // open=0, locked=1
-  DOOR_OPEN = 2,   // open=1, locked=0
-  DOOR_FAULT = 3,  // open=1, locked=1
+  DOOR_OPEN   = 2, // open=1, locked=0
+  DOOR_FAULT  = 3, // open=1, locked=1
 };
 
 //! Events are sent from the user to the state machine.
 //! A user is the controller of the state machine.
-enum PortalEvent {
-  EVENT_OPEN,
+enum PortalEvent
+{
+  EVENT_OPEN_SAFE,
+  EVENT_OPEN_UNSAFE,
   EVENT_CLOSE,
   EVENT_TIMEOUT,
 };
 
 //! Signals are events that are sent from the state machine to the user.
 //! A user is the controller of the state machine.
-enum PortalSignal {
+enum PortalSignal
+{
   //! The state machine begins the portal unlocking process
   SIGNAL_OPENING,
 
@@ -59,7 +63,8 @@ enum PortalSignal {
   SIGNAL_DOOR_MANUALLY_LOCKED,
 };
 
-enum PortalError {
+enum PortalError
+{
   //! Operation was successful
   SM_SUCCESS = 0,
 
@@ -71,23 +76,24 @@ enum PortalError {
   SM_ERR_UNEXPECTED = 2,
 };
 
-enum PortalIo {
+enum PortalIo
+{
   IO_TRIGGER_OPEN,
   IO_TRIGGER_CLOSE,
 };
 
 struct StateMachine;
 
-typedef void (*StateMachineSignal)(struct StateMachine *sm,
-                                   enum PortalSignal signal);
-typedef void (*StateMachineSetTimeout)(struct StateMachine *sm, uint32_t ms);
-typedef void (*StateMachineSetIo)(struct StateMachine *sm, enum PortalIo io,
-                                  bool active);
+typedef void (*StateMachineSignal)(struct StateMachine * sm,
+                                   enum PortalSignal     signal);
+typedef void (*StateMachineSetTimeout)(struct StateMachine * sm, uint32_t ms);
+typedef void (*StateMachineSetIo)(struct StateMachine * sm, enum PortalIo io, bool active);
 
-struct StateMachine {
+struct StateMachine
+{
   //! General purpose user data that can be used to obtain a external context
   //! for event handling.
-  void *user_data;
+  void * user_data;
 
   //! The state machine wants to tell the user that an event happened.
   StateMachineSignal signal;
@@ -103,6 +109,7 @@ struct StateMachine {
   // internals:
   unsigned int door_state;
   unsigned int logic_state;
+  bool         unsafe_action;
 };
 
 //! Initializes a state machine.
@@ -114,17 +121,15 @@ struct StateMachine {
 //!   portal.
 //! - `user_data` is an optional pointer to *anything*. This can be used in the
 //!   callbacks to obtain a well-known context from the state machine.
-void sm_init(struct StateMachine *sm, enum DoorState inital_state,
-             StateMachineSignal signal, StateMachineSetTimeout setTimeout,
-             StateMachineSetIo setIo, void *user_data);
+void sm_init(struct StateMachine * sm, enum DoorState inital_state, StateMachineSignal signal, StateMachineSetTimeout setTimeout, StateMachineSetIo setIo, void * user_data);
 
 //! Notifies the state machine of a change in the door state.
-void sm_change_door_state(struct StateMachine *sm, enum DoorState new_state);
+void sm_change_door_state(struct StateMachine * sm, enum DoorState new_state);
 
 //! Sends a event to the state machine. This is either user-triggered or
 //! generated automatically like timeouts. Returns an error when the action
 //! could not be handled.
-enum PortalError sm_send_event(struct StateMachine *sm, enum PortalEvent event);
+enum PortalError sm_send_event(struct StateMachine * sm, enum PortalEvent event);
 
 //! Computes a `DoorState` from two booleans `locked` and `open`.
 //! - `locked` means the door sensor for "locking bolt is not enganged"

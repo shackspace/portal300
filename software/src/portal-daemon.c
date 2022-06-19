@@ -630,8 +630,6 @@ int main(int argc, char ** argv)
                 (void)send_ipc_infof(pfd.fd, "  door_control_b2: %s", device_status.door_control_b2 ? "online" : "offline");
                 (void)send_ipc_infof(pfd.fd, "  door_control_c2: %s", device_status.door_control_c2 ? "online" : "offline");
                 (void)send_ipc_infof(pfd.fd, "  busch_interface: %s", device_status.busch_interface ? "online" : "offline");
-                (void)send_ipc_info(pfd.fd, "");
-                (void)send_ipc_infof(pfd.fd, "Das Portal ist noch nicht vollständig implementiert. Auf Wiedersehen!");
 
                 // after a status message, we can just drop the client connection
                 remove_ipc_client(pfd_index);
@@ -1279,7 +1277,6 @@ void print_log_to_ipc_clients(void * user_data, enum LogSubSystem subsystem, enu
 
   for (size_t i = POLLFD_FIRST_IPC; i < pollfds_size; i++) {
     if (ipc_client_info_storage[i].forward_logs) {
-
       if (subsystem == LSS_SYSTEM && level == LL_MESSAGE) {
         send_ipc_info(pollfds[i].fd, msg);
       }

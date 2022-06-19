@@ -63,11 +63,12 @@ static void statemachine_setTimeout(struct StateMachine * sm, uint32_t ms);
 static void statemachine_setIo(struct StateMachine * sm, enum PortalIo io, bool active);
 static void io_changed_level(void);
 
-static const EventBits_t  EVENT_SM_TIMEOUT_BIT    = (1 << 0);
-static const EventBits_t  EVENT_SM_IO_CHANGED_BIT = (1 << 1);
-static const EventBits_t  EVENT_SM_CLOSE_REQUEST  = (1 << 2);
-static const EventBits_t  EVENT_SM_OPEN_REQUEST   = (1 << 3);
-static EventGroupHandle_t event_group             = NULL;
+static const EventBits_t  EVENT_SM_TIMEOUT_BIT         = (1 << 0);
+static const EventBits_t  EVENT_SM_IO_CHANGED_BIT      = (1 << 1);
+static const EventBits_t  EVENT_SM_CLOSE_REQUEST       = (1 << 2);
+static const EventBits_t  EVENT_SM_SAFE_OPEN_REQUEST   = (1 << 3);
+static const EventBits_t  EVENT_SM_UNSAFE_OPEN_REQUEST = (1 << 4);
+static EventGroupHandle_t event_group                  = NULL;
 
 static enum DoorState get_door_state()
 {
@@ -128,7 +129,7 @@ void app_main(void)
   while (1) {
     EventBits_t const current_state = xEventGroupWaitBits(
         event_group,
-        EVENT_SM_TIMEOUT_BIT | EVENT_SM_IO_CHANGED_BIT | EVENT_SM_CLOSE_REQUEST | EVENT_SM_OPEN_REQUEST,
+        EVENT_SM_TIMEOUT_BIT | EVENT_SM_IO_CHANGED_BIT | EVENT_SM_CLOSE_REQUEST | EVENT_SM_SAFE_OPEN_REQUEST | EVENT_SM_UNSAFE_OPEN_REQUEST,
         pdTRUE,                  // clear on return
         pdFALSE,                 // return as soon as one bit was set
         100 / portTICK_PERIOD_MS // wait some time
@@ -167,7 +168,7 @@ void app_main(void)
           if (current_time - last_button_press_time >= BUTTON_DEBOUNCE_TIME / portTICK_PERIOD_MS) {
             last_button_press_time = current_time;
 
-            mqtt_pub(PORTAL300_TOPIC_EVENT_CLOSE_REQUEST, DOOR_NAME(CURRENT_DOOR));
+            mqtt_pub(PORTAL300_TOPIC_EVENT_BUTTON, DOOR_NAME(CURRENT_DOOR));
           }
         }
       }
@@ -181,17 +182,22 @@ void app_main(void)
       ESP_LOGI(TAG, "forwarding open request to state machine.");
       log_sm_error(sm_send_event(&core_logic, EVENT_CLOSE));
     }
-    if (current_state & EVENT_SM_OPEN_REQUEST) {
-      ESP_LOGI(TAG, "forwarding open request to state machine.");
-      log_sm_error(sm_send_event(&core_logic, EVENT_OPEN));
+    if (current_state & EVENT_SM_SAFE_OPEN_REQUEST) {
+      ESP_LOGI(TAG, "forwarding safe-open request to state machine.");
+      log_sm_error(sm_send_event(&core_logic, EVENT_OPEN_SAFE));
+    }
+    if (current_state & EVENT_SM_UNSAFE_OPEN_REQUEST) {
+      ESP_LOGI(TAG, "forwarding unsafe-open request to state machine.");
+      log_sm_error(sm_send_event(&core_logic, EVENT_OPEN_UNSAFE));
     }
   }
 }
 
 static void on_mqtt_connect(void)
 {
-  mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR);
-  mqtt_subscribe(PORTAL300_TOPIC_ACTION_CLOSE_DOOR);
+  mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE);
+  mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE);
+  mqtt_subscribe(PORTAL300_TOPIC_ACTION_LOCK_DOOR);
 
   enum DoorState door_state = get_door_state();
   publish_door_status(door_state);
@@ -199,13 +205,19 @@ static void on_mqtt_connect(void)
 
 static void on_mqtt_data_received(struct MqttEvent const * event)
 {
-  if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_OPEN_DOOR)) {
+  if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE)) {
     if (mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
-      ESP_LOGI(TAG, "Received open command");
-      xEventGroupSetBits(event_group, EVENT_SM_OPEN_REQUEST);
+      ESP_LOGI(TAG, "Received safe open command");
+      xEventGroupSetBits(event_group, EVENT_SM_SAFE_OPEN_REQUEST);
     }
   }
-  else if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_CLOSE_DOOR)) {
+  if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE)) {
+    if (mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
+      ESP_LOGI(TAG, "Received unsafe open command");
+      xEventGroupSetBits(event_group, EVENT_SM_UNSAFE_OPEN_REQUEST);
+    }
+  }
+  else if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_LOCK_DOOR)) {
     if (mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
       ESP_LOGI(TAG, "Received close command");
       xEventGroupSetBits(event_group, EVENT_SM_CLOSE_REQUEST);

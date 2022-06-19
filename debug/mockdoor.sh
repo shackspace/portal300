@@ -56,14 +56,22 @@ mosquitto_sub \
       if [ "${data}" == "door.${door}2" ]; then
 
         if [ "${state}" == "locked" ]; then
-          echo "open door ${door}"
+          echo "opening door ${door} safely..."
+
+          sleep_random # simulate motor activity
 
           # play sequence "unlock and enter"
           pub "shackspace/portal/status/door-${door}2" "closed"
-          sleep_random
+          echo "door is now closed"
+
+          sleep_random # simulate user walking
           pub "shackspace/portal/status/door-${door}2" "opened"
-          sleep_random
+          echo "door is now open"
+
+          sleep 1
+          
           pub "shackspace/portal/status/door-${door}2" "closed"
+          echo "door is now closed"
         else
           echo "door ${door} is already open"
         fi
@@ -75,7 +83,9 @@ mosquitto_sub \
       if [ "${data}" == "door.${door}2" ]; then
 
         if [ "${state}" == "locked" ]; then
-          echo "open door ${door}"
+          echo "open door ${door} unsafely..."
+
+          sleep_random # simulate motor activity
 
           # play sequence "unlock, don't enter"
           pub "shackspace/portal/status/door-${door}2" "closed"
@@ -91,11 +101,11 @@ mosquitto_sub \
         if [ "${state}" != "locked" ]; then
           echo "lock door ${door}"
 
-          if [ "${state}" == "opened" ]; then 
+          if [ "${state}" == "opened" ]; then
+            sleep_random # simulate user activity 
             pub "shackspace/portal/status/door-${door}2" "closed"
-            sleep_random
           fi
-          sleep_random
+          sleep_random # simulate motor activity
           pub "shackspace/portal/status/door-${door}2" "locked"
         else
           echo "door ${door} is already locked"
@@ -103,7 +113,6 @@ mosquitto_sub \
         state="locked"
       fi
       ;;
-
 
       *)
         # echo "unhandled topic '${topic}'"

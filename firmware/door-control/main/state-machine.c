@@ -60,6 +60,7 @@ static void set_state(struct StateMachine * sm, enum State state)
     sm->setIo(sm, IO_TRIGGER_CLOSE, false);
     sm->setIo(sm, IO_TRIGGER_OPEN, false);
     sm->setTimeout(sm, 0);
+    sm->unsafe_action = false;
     break;
   }
 
@@ -79,7 +80,6 @@ static void set_state(struct StateMachine * sm, enum State state)
   {
     sm->setIo(sm, IO_TRIGGER_OPEN, false);
     sm->setTimeout(sm, TIMEOUT_DISENGAGE_BOLT);
-    sm->signal(sm, SIGNAL_UNLOCKED);
     break;
   }
 
@@ -193,7 +193,16 @@ void sm_change_door_state(struct StateMachine * sm, enum DoorState new_state)
   case STATE_WAIT_FOR_UNLOCKED:
   {
     if (new_state == DOOR_CLOSED) {
-      set_state(sm, STATE_WAIT_FOR_OPEN);
+      sm->signal(sm, SIGNAL_UNLOCKED);
+      if (sm->unsafe_action) {
+        // unsafe unlock: we're done here
+        set_state(sm, STATE_IDLE);
+      }
+      else {
+        // wait until a user opens the door in 60 seconds.
+        // will lock door again if the door won't be opened
+        set_state(sm, STATE_WAIT_FOR_OPEN);
+      }
     }
     else {
       log_print(LSS_LOGIC, LL_WARNING, "unexpected door change event in state STATE_WAIT_FOR_UNLOCKED!");
@@ -243,10 +252,16 @@ enum PortalError sm_send_event(struct StateMachine * sm, enum PortalEvent event)
 {
   assert(sm != NULL);
   switch (event) {
-  case EVENT_OPEN:
+  case EVENT_OPEN_SAFE:
+  case EVENT_OPEN_UNSAFE:
   {
     if (sm->logic_state != STATE_IDLE)
       return SM_ERR_IN_PROGRESS;
+
+    // store this for later use:
+    // if this variable is set, the 60 second wait till door is opened
+    // is skipped and the shack will be unlocked without checking.
+    sm->unsafe_action = (event == EVENT_OPEN_UNSAFE);
 
     switch (sm->door_state) {
     case DOOR_LOCKED:
