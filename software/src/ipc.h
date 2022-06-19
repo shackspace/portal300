@@ -29,19 +29,21 @@ enum IpcRcvResult
   IPC_ERROR   = 2,
 };
 
+struct IpcMessageOpenData
+{
+  int  member_id;
+  char member_nick[IPC_MAX_NICK_LEN]; // not necessarily 0 terminated!
+  char member_name[IPC_MAX_NAME_LEN]; // not necessarily 0 terminated!
+};
+
 struct IpcMessage
 {
   // THIS STRUCT MUST NOT CONTAIN ANY POINTERS!
   enum IcpMessageType type;
   union
   {
-    struct
-    {
-      int  member_id;
-      char member_nick[IPC_MAX_NICK_LEN]; // not necessarily 0 terminated!
-      char member_name[IPC_MAX_NAME_LEN]; // not necessarily 0 terminated!
-    } open;
-    char info[IPC_MAX_INFOSTR_LEN]; // not necessarily 0 terminated!
+    struct IpcMessageOpenData open;
+    char                      info[IPC_MAX_INFOSTR_LEN]; // not necessarily 0 terminated!
   } data;
 };
 

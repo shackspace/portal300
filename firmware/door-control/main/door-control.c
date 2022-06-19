@@ -25,7 +25,6 @@
 #define MERGE_TOPIC_INNER(_Space, _Name) _Space##_Name
 
 #define SYSTEM_STATUS_TOPIC(_Name) MERGE_TOPIC_INNER(PORTAL300_TOPIC_STATUS_, _Name)
-#define DOOR_STATUS_TOPIC(_Name)   MERGE_TOPIC_INNER(PORTAL300_TOPIC_STATUS_DOOR_, _Name)
 
 #define TAG "application logic"
 
@@ -101,7 +100,7 @@ static void publish_door_status(enum DoorState state)
   case DOOR_CLOSED: state_msg = PORTAL300_STATUS_DOOR_CLOSED; break;
   case DOOR_FAULT: state_msg = "fault"; break;
   }
-  mqtt_pub(DOOR_STATUS_TOPIC(CURRENT_DOOR), state_msg);
+  mqtt_pub(PORTAL300_TOPIC_STATUS_DOOR(CURRENT_DOOR), state_msg);
 }
 
 void app_main(void)

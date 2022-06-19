@@ -36,11 +36,16 @@ extern enum LogLevel log_level;
 bool log_init(void);
 void log_deinit(void);
 
+void log_set_level(enum LogSubSystem subsystem, enum LogLevel level);
+
 void log_register_consumer(struct LogConsumer * consumer);
 
 void log_write(enum LogSubSystem subsystem, enum LogLevel level, char const * msg);
 void log_print(enum LogSubSystem subsystem, enum LogLevel level, char const * fmt, ...) __attribute__((format(printf, 3, 4)));
 
 void log_perror(enum LogSubSystem subsystem, enum LogLevel level, char const * msg);
+
+char const * log_get_subsystem_name(enum LogSubSystem subsystem);
+char const * log_get_level_name(enum LogLevel level);
 
 #endif

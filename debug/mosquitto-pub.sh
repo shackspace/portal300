@@ -17,7 +17,6 @@ if [ -z "${DATA}" ]; then
 fi
 
 exec mosquitto_pub \
-  -d \
   -L "mqtts://mqtt.portal.shackspace.de/${TOPIC}" \
   -m "${DATA}" \
   --cafile "${SCRIPT_ROOT}/ca.crt" \

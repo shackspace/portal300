@@ -1,6 +1,7 @@
 #include "ipc.h"
 #include "log.h"
 #include "mqtt-client.h"
+#include "state-machine.h"
 
 #include <portal300.h>
 
@@ -50,30 +51,29 @@ struct DeviceStatus
   bool busch_interface;
 };
 
-enum DoorStatus
-{
-  DOOR_UNOBSERVED,
-  DOOR_OPEN,
-  DOOR_CLOSED,
-  DOOR_LOCKED,
-};
-
-struct DoorStates
-{
-  enum DoorStatus b2;
-  enum DoorStatus c2;
-};
-
-static struct DoorStates door_state = {
-    .b2 = DOOR_UNOBSERVED,
-    .c2 = DOOR_UNOBSERVED,
-};
-
 static struct DeviceStatus device_status = {
     .ssh_interface   = true, // we're always online
     .door_control_b2 = false,
     .door_control_c2 = false,
     .busch_interface = false,
+};
+
+enum IpcDisconnectFlag
+{
+  IPC_DISCONNECT_ON_LOCKED    = (1 << 0),
+  IPC_DISCONNECT_ON_OPEN      = (1 << 1),
+  IPC_DISCONNECT_ON_NO_CHANGE = (1 << 2),
+};
+
+struct IpcClientInfo
+{
+  uint32_t client_id;
+  uint32_t disconnect_flags;
+  bool     forward_logs;
+
+  char * nick_name;
+  char * full_name;
+  int    member_id;
 };
 
 static volatile sig_atomic_t shutdown_requested = 0;
@@ -90,10 +90,11 @@ static struct MqttClient * mqtt_client = NULL;
 //! Stack array of pollfds. Everything below POLLFD_FIRST_IPC is pre-intialized and has a static purpose
 //! while everything at POLLFD_FIRST_IPC till POLLFD_LIMIT is a dynamic stack of pollfds for ipc client connections.
 static struct pollfd pollfds[POLLFD_LIMIT];
-static size_t        pollfds_size = POLLFD_FIRST_IPC;
+struct IpcClientInfo ipc_client_info_storage[POLLFD_LIMIT];
+static uint32_t      pollfds_size = POLLFD_FIRST_IPC;
 
 //! Index of an invalid IPC client
-static const size_t INVALID_IPC_CLIENT = ~0U;
+static const uint32_t INVALID_IPC_CLIENT = ~0U;
 
 static void close_ipc_sock(void);
 static void close_mqtt_client(void);
@@ -103,6 +104,7 @@ static void sigterm_handler(int sig, siginfo_t * info, void * ucontext);
 
 static size_t add_ipc_client(int fd);
 static void   remove_ipc_client(size_t index);
+static void   remove_all_ipc_clients(uint32_t disconnect_flags);
 
 static bool try_connect_mqtt(void);
 static bool install_signal_handlers(void);
@@ -124,41 +126,42 @@ static bool parse_cli(int argc, char ** argv, struct CliOptions * args);
 
 static void print_usage(FILE * stream);
 
-static char const * door_status_name(enum DoorStatus status);
-
 static void panic(char const * msg)
 {
   log_print(LSS_SYSTEM, LL_ERROR, "\n\nPANIC: %s\n\n\n", msg);
   exit(EXIT_FAILURE);
 }
 
-//! Returns `true` only when the shackspace was fully unlocked
-static bool is_shack_open_safe(void)
-{
-  // TODO: integrate shackspace back door
-  // return (door_state.b2 != DOOR_LOCKED) && (door_state.b2 != DOOR_UNOBSERVED) && (door_state.c2 != DOOR_LOCKED) && (door_state.c2 != DOOR_UNOBSERVED);
-  return (door_state.b2 != DOOR_LOCKED) && (door_state.b2 != DOOR_UNOBSERVED);
-}
+static void state_machine_signal_handler(void * user_data, void * context, enum SM_Signal signal);
 
-//! Returns `true` when it's possible to enter the space.
-static bool is_shack_open_unsafe(void)
-{
-  // TODO: integrate shackspace back door
-  // || (door_state.c2 != DOOR_LOCKED)
-  return (door_state.b2 != DOOR_LOCKED);
-}
+static bool push_signal(enum SM_Signal sig, uint32_t client_id);
+static bool pop_signal(enum SM_Signal * sig, uint32_t * client_id);
 
-//! When set to true, the door will be unlocked in the next loop
-static bool trigger_unlock_door = false;
+static struct StateMachine global_state_machine;
+
+static uint32_t find_ipc_client_by_id(uint32_t client_id);
+
+static uint32_t fetch_next_client_id(void);
+
+static void print_log_to_ipc_clients(void * user_data, enum LogSubSystem subsystem, enum LogLevel level, char const * msg);
+
+static struct LogConsumer ipc_client_logger = {
+    .log       = print_log_to_ipc_clients,
+    .user_data = NULL,
+};
 
 int main(int argc, char ** argv)
 {
   // Initialize libraries and dependencies:
 
+  sm_init(&global_state_machine, state_machine_signal_handler, NULL);
+
   if (!log_init()) {
     fprintf(stderr, "failed to initialize logging.\n");
     return EXIT_FAILURE;
   }
+
+  log_set_level(LSS_IPC, LL_WARNING);
 
   if (!install_signal_handlers()) {
     log_print(LSS_SYSTEM, LL_ERROR, "failed to install signal handlers.");
@@ -259,15 +262,140 @@ int main(int argc, char ** argv)
     }
   }
 
+  log_register_consumer(&ipc_client_logger);
+
   while (shutdown_requested == false) {
+    {
+      enum SM_Signal signal;
+      uint32_t       client_id;
+      while (pop_signal(&signal, &client_id)) {
+        uint32_t const               ipc_client_index = find_ipc_client_by_id(client_id);
+        uint32_t const               ipc_client_valid = (ipc_client_index != INVALID_IPC_CLIENT);
+        struct IpcClientInfo * const ipc_client_data  = ipc_client_valid ? &ipc_client_info_storage[ipc_client_index] : NULL;
 
-    if (trigger_unlock_door) {
-      trigger_unlock_door = false;
+        switch (signal) {
+        case SIGNAL_OPEN_DOOR_B:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Unlocking building front door.");
 
-      log_print(LSS_SYSTEM, LL_MESSAGE, "Unlocking front door.");
+          // Wenn der shack aktuell sicher "offen" ist, senden wir eine Nachricht an die Fronttüre:
+          if (!send_mqtt_msg(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE, DOOR_NAME(DOOR_B))) {
+            log_print(LSS_SYSTEM, LL_ERROR, "Failed to send message to open B.");
+          }
 
-      // Wenn der shack aktuell sicher "offen" ist, senden wir eine Nachricht an die Fronttüre:
-      send_mqtt_msg(PORTAL300_TOPIC_ACTION_OPEN_DOOR, "door.B");
+          break;
+
+        case SIGNAL_OPEN_DOOR_C:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Unlocking building back door.");
+          if (!send_mqtt_msg(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE, DOOR_NAME(DOOR_C))) {
+            log_print(LSS_SYSTEM, LL_ERROR, "Failed to send message to open C.");
+          }
+          break;
+
+        case SIGNAL_OPEN_DOOR_B2_SAFE:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Safely opening inner front door.");
+          if (!send_mqtt_msg(PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE, DOOR_NAME(DOOR_B2))) {
+            log_print(LSS_SYSTEM, LL_ERROR, "Failed to send message to safely open B2");
+          }
+          break;
+
+        case SIGNAL_OPEN_DOOR_C2_SAFE:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Safely opening inner back door.");
+          if (!send_mqtt_msg(PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE, DOOR_NAME(DOOR_C2))) {
+            log_print(LSS_SYSTEM, LL_ERROR, "Failed to send message to safely open C2");
+          }
+          break;
+
+        case SIGNAL_OPEN_DOOR_B2_UNSAFE:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Opening inner front door.");
+          if (!send_mqtt_msg(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE, DOOR_NAME(DOOR_B2))) {
+            log_print(LSS_SYSTEM, LL_ERROR, "Failed to send message to open B2");
+          }
+          break;
+
+        case SIGNAL_OPEN_DOOR_C2_UNSAFE:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Opening inner back door.");
+          if (!send_mqtt_msg(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE, DOOR_NAME(DOOR_C2))) {
+            log_print(LSS_SYSTEM, LL_ERROR, "Failed to send message to open C2");
+          }
+          break;
+
+        case SIGNAL_LOCK_ALL:
+        {
+          bool ok;
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Sending request to lock all doors...");
+
+          // Close both doors
+          ok = send_mqtt_msg(PORTAL300_TOPIC_ACTION_LOCK_DOOR, DOOR_NAME(DOOR_C2));
+          if (!ok) {
+            log_print(LSS_SYSTEM, LL_ERROR, "Could not send message to close door C2");
+            break;
+          }
+
+          ok = send_mqtt_msg(PORTAL300_TOPIC_ACTION_LOCK_DOOR, DOOR_NAME(DOOR_B2));
+          if (!ok) {
+            log_print(LSS_SYSTEM, LL_ERROR, "Could not send message to close door B2");
+            break;
+          }
+
+          break;
+        }
+
+        case SIGNAL_UNLOCK_SUCCESSFUL:
+        {
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Received state machine signal: SIGNAL_UNLOCK_SUCCESSFUL");
+
+          break;
+        }
+
+        case SIGNAL_LOCK_SUCCESSFUL:
+        {
+          log_print(LSS_SYSTEM, LL_MESSAGE, "shack was successfully locked");
+          remove_all_ipc_clients(IPC_DISCONNECT_ON_LOCKED);
+          break;
+        }
+
+        case SIGNAL_OPEN_SUCCESSFUL:
+        {
+          log_print(LSS_SYSTEM, LL_MESSAGE, "shack was successfully unlocked");
+          remove_all_ipc_clients(IPC_DISCONNECT_ON_OPEN);
+          break;
+        }
+
+        case SIGNAL_CHANGE_KEYHOLDER:
+        {
+          if (ipc_client_valid) {
+            log_print(LSS_SYSTEM, LL_MESSAGE, "Changing active keyholder to %s", ipc_client_data->nick_name);
+          }
+          else {
+            log_print(LSS_SYSTEM, LL_MESSAGE, "Could not transfer keyholder status: Could not detect active keyholder.");
+          }
+          remove_all_ipc_clients(IPC_DISCONNECT_ON_OPEN);
+          break;
+        }
+
+        case SIGNAL_CANNOT_HANDLE_REQUEST:
+        {
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Could not handle user request.");
+
+          if (ipc_client_valid) {
+            int fd = pollfds[ipc_client_index].fd;
+            send_ipc_info(fd, "Could not handle your request right now. Another process is still in action.");
+
+            remove_ipc_client(ipc_client_index);
+          }
+          break;
+        }
+
+        case SIGNAL_STATE_CHANGE:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "shackspace is now %s", sm_shack_state_name(sm_get_shack_state(&global_state_machine)));
+          break;
+
+        case SIGNAL_NO_STATE_CHANGE:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "shackspace is still %s", sm_shack_state_name(sm_get_shack_state(&global_state_machine)));
+          remove_all_ipc_clients(IPC_DISCONNECT_ON_NO_CHANGE);
+          break;
+        }
+      }
     }
 
     // sync the mqtt client to send some leftovers
@@ -284,10 +412,10 @@ int main(int argc, char ** argv)
     struct timespec loop_start, loop_end;
     clock_gettime(CLOCK_MONOTONIC, &loop_start);
 
-    for (size_t i = 0; i < pollfds_size; i++) {
-      const struct pollfd pfd = pollfds[i];
+    for (size_t pfd_index = 0; pfd_index < pollfds_size; pfd_index++) {
+      const struct pollfd pfd = pollfds[pfd_index];
       if (pfd.revents != 0) {
-        switch (i) {
+        switch (pfd_index) {
         // this is the IPC listener. accept clients here
         case POLLFD_IPC:
         {
@@ -325,7 +453,7 @@ int main(int argc, char ** argv)
               }
               else {
                 log_print(LSS_MQTT, LL_WARNING, "Lost connection to MQTT, reconnecting in %d seconds...", MQTT_RECONNECT_TIMEOUT);
-                pollfds[i].fd = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
+                pollfds[pfd_index].fd = create_reconnect_timeout_timer(MQTT_RECONNECT_TIMEOUT);
               }
             }
           }
@@ -343,7 +471,7 @@ int main(int argc, char ** argv)
                 log_perror(LSS_MQTT, LL_WARNING, "failed to destroy timerfd");
               }
 
-              pollfds[i].fd = mqtt_client_get_socket_fd(mqtt_client);
+              pollfds[pfd_index].fd = mqtt_client_get_socket_fd(mqtt_client);
             }
             else {
               log_print(LSS_MQTT, LL_WARNING, "failed to connect to mqtt server, retrying in %d seconds", MQTT_RECONNECT_TIMEOUT);
@@ -356,19 +484,20 @@ int main(int argc, char ** argv)
         default:
         {
           if (pfd.revents & POLLERR) {
-            log_print(LSS_IPC, LL_MESSAGE, "lost IPC client on connection slot %zu", i);
-            remove_ipc_client(i);
+            log_print(LSS_IPC, LL_MESSAGE, "lost IPC client on connection slot %zu", pfd_index);
+            remove_ipc_client(pfd_index);
           }
           else if (pfd.revents & POLLIN) {
-            struct IpcMessage msg;
+            struct IpcClientInfo * const ipc_client_data = &ipc_client_info_storage[pfd_index];
 
+            struct IpcMessage msg;
             enum IpcRcvResult msg_ok = ipc_receive_msg(pfd.fd, &msg);
 
             switch (msg_ok) {
             case IPC_EOF:
             {
-              remove_ipc_client(i);
-              log_print(LSS_IPC, LL_MESSAGE, "connection to ipc socket slot %zu closed", i);
+              remove_ipc_client(pfd_index);
+              log_print(LSS_IPC, LL_MESSAGE, "connection to ipc socket slot %zu closed", pfd_index);
               break;
             }
             case IPC_ERROR:
@@ -382,88 +511,120 @@ int main(int argc, char ** argv)
               case IPC_MSG_OPEN_BACK:
               case IPC_MSG_OPEN_FRONT:
               {
-                bool ok;
-                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal opening via %s for (%d, '%.*s', '%.*s').", i, (msg.type == IPC_MSG_OPEN_BACK) ? "back door" : "front door", msg.data.open.member_id, (int)strnlen(msg.data.open.member_nick, sizeof msg.data.open.member_nick), msg.data.open.member_nick, (int)strnlen(msg.data.open.member_name, sizeof msg.data.open.member_name), msg.data.open.member_name);
+                ipc_client_data->forward_logs = true;
+                ipc_client_data->disconnect_flags |= (IPC_DISCONNECT_ON_OPEN | IPC_DISCONNECT_ON_NO_CHANGE);
 
-                // TODO: Handle open message
+                size_t const nick_len = strnlen(msg.data.open.member_nick, IPC_MAX_NICK_LEN);
+                size_t const name_len = strnlen(msg.data.open.member_name, IPC_MAX_NAME_LEN);
+
+                if (nick_len == 0 || name_len == 0 || msg.data.open.member_id <= 0) {
+                  send_ipc_info(pfd.fd, "Es wurden keine gültigen Member-Daten übertragen!");
+                  remove_ipc_client(pfd_index);
+                  break;
+                }
+
+                free(ipc_client_data->nick_name);
+                free(ipc_client_data->full_name);
+
+                ipc_client_data->nick_name = malloc(nick_len + 1);
+                ipc_client_data->full_name = malloc(name_len + 1);
+
+                if (ipc_client_data->nick_name == NULL) {
+                  free(ipc_client_data->nick_name);
+                  free(ipc_client_data->full_name);
+
+                  send_ipc_info(pfd.fd, "Out of memory!");
+                  remove_ipc_client(pfd_index);
+                  break;
+                }
+                if (ipc_client_data->full_name == NULL) {
+                  free(ipc_client_data->nick_name);
+                  free(ipc_client_data->full_name);
+
+                  send_ipc_info(pfd.fd, "Out of memory!");
+                  remove_ipc_client(pfd_index);
+                  break;
+                }
+
+                memcpy(ipc_client_data->nick_name, msg.data.open.member_nick, nick_len);
+                memcpy(ipc_client_data->full_name, msg.data.open.member_name, name_len);
+                ipc_client_data->nick_name[nick_len] = 0;
+                ipc_client_data->full_name[name_len] = 0;
+                ipc_client_data->member_id           = msg.data.open.member_id;
+
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal opening via %s for (%d, '%.*s', '%.*s').", pfd_index, (msg.type == IPC_MSG_OPEN_BACK) ? "back door" : "front door", msg.data.open.member_id, (int)strnlen(msg.data.open.member_nick, sizeof msg.data.open.member_nick), msg.data.open.member_nick, (int)strnlen(msg.data.open.member_name, sizeof msg.data.open.member_name), msg.data.open.member_name);
 
                 send_ipc_infof(pfd.fd, "Portal wird geöffnet, bitte warten...");
 
-                // Open outer door
-                ok = send_mqtt_msg(
-                    PORTAL300_TOPIC_ACTION_OPEN_DOOR,
-                    (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_NAME(DOOR_C) : DOOR_NAME(DOOR_B));
-                if (!ok) {
-                  send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen!");
-                  remove_ipc_client(i);
-                  break;
-                }
+                sm_apply_event(
+                    &global_state_machine,
+                    (msg.type == IPC_MSG_OPEN_BACK) ? EVENT_SSH_OPEN_BACK_REQUEST : EVENT_SSH_OPEN_FRONT_REQUEST,
+                    &ipc_client_data->client_id);
 
-                // Open inner door
-                ok = send_mqtt_msg(
-                    PORTAL300_TOPIC_ACTION_OPEN_DOOR,
-                    (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_NAME(DOOR_C2) : DOOR_NAME(DOOR_B2));
-                if (!ok) {
-                  send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen!");
-                  remove_ipc_client(i);
-                  break;
-                }
+                // // Open outer door
+                // ok = send_mqtt_msg(
+                //     PORTAL300_TOPIC_ACTION_OPEN_DOOR,
+                //     (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_NAME(DOOR_C) : DOOR_NAME(DOOR_B));
+                // if (!ok) {
+                //   send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen!");
+                //   remove_ipc_client(i);
+                //   break;
+                // }
+
+                // // Open inner door
+                // ok = send_mqtt_msg(
+                //     PORTAL300_TOPIC_ACTION_OPEN_DOOR,
+                //     (msg.type == IPC_MSG_OPEN_BACK) ? DOOR_NAME(DOOR_C2) : DOOR_NAME(DOOR_B2));
+                // if (!ok) {
+                //   send_ipc_infof(pfd.fd, "Konnte Portal nicht öffnen!");
+                //   remove_ipc_client(i);
+                //   break;
+                // }
 
                 break;
               }
 
               case IPC_MSG_CLOSE:
               {
-                bool ok;
-                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal close.", i);
+                ipc_client_data->forward_logs = true;
+                ipc_client_data->disconnect_flags |= (IPC_DISCONNECT_ON_LOCKED | IPC_DISCONNECT_ON_NO_CHANGE);
 
-                // TODO: Handle close message
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal close.", pfd_index);
 
                 send_ipc_infof(pfd.fd, "Portal wird geschlossen, bitte warten...");
 
-                // Close both doors
-                ok = send_mqtt_msg(
-                    PORTAL300_TOPIC_ACTION_CLOSE_DOOR,
-                    DOOR_NAME(DOOR_C2));
-                if (!ok) {
-                  send_ipc_infof(pfd.fd, "Konnte Portal nicht abschließen!");
-                  remove_ipc_client(i);
-                  break;
-                }
-
-                ok = send_mqtt_msg(
-                    PORTAL300_TOPIC_ACTION_CLOSE_DOOR,
-                    DOOR_NAME(DOOR_B2));
-                if (!ok) {
-                  send_ipc_infof(pfd.fd, "Konnte Portal nicht abschließen!");
-                  remove_ipc_client(i);
-                  break;
-                }
+                sm_apply_event(
+                    &global_state_machine,
+                    EVENT_SSH_CLOSE_REQUEST,
+                    &ipc_client_data->client_id);
 
                 break;
               }
 
               case IPC_MSG_SHUTDOWN:
               {
-                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal shutdown.", i);
+                ipc_client_data->forward_logs = true;
+
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal shutdown.", pfd_index);
 
                 send_ipc_infof(pfd.fd, "Shutdown wird zur Zeit noch nicht unterstützt...");
-                remove_ipc_client(i);
+                remove_ipc_client(pfd_index);
 
                 break;
               }
 
               case IPC_MSG_QUERY_STATUS:
               {
-                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal status.", i);
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal status.", pfd_index);
 
                 (void)send_ipc_infof(pfd.fd, "Portal-Status:");
-                (void)send_ipc_infof(pfd.fd, "  Aktivität:       %s", "???"); // idle, öffnen, schließen
+                (void)send_ipc_infof(pfd.fd, "  Space Status:    %s", sm_shack_state_name(sm_get_shack_state(&global_state_machine)));
+                (void)send_ipc_infof(pfd.fd, "  Aktivität:       %s", sm_state_name(&global_state_machine));
                 (void)send_ipc_infof(pfd.fd, "  MQTT:            %s", mqtt_client_is_connected(mqtt_client) ? "Verbunden" : "Nicht verbunden");
-                (void)send_ipc_infof(pfd.fd, "  IPC Clients:     %zu", (pollfds_size - POLLFD_FIRST_IPC));
+                (void)send_ipc_infof(pfd.fd, "  IPC Clients:     %u", (pollfds_size - POLLFD_FIRST_IPC));
                 (void)send_ipc_infof(pfd.fd, "Tür-Status:");
-                (void)send_ipc_infof(pfd.fd, "  B2:              %s", door_status_name(door_state.b2)); // geöffnet, geschlossen
-                (void)send_ipc_infof(pfd.fd, "  C2:              %s", door_status_name(door_state.c2)); // geöffnet, geschlossen
+                (void)send_ipc_infof(pfd.fd, "  B2:              %s", sm_door_state_name(global_state_machine.door_b2)); // geöffnet, geschlossen
+                (void)send_ipc_infof(pfd.fd, "  C2:              %s", sm_door_state_name(global_state_machine.door_c2)); // geöffnet, geschlossen
                 (void)send_ipc_infof(pfd.fd, "Geräte-Status:");
                 (void)send_ipc_infof(pfd.fd, "  ssh_interface:   %s", device_status.ssh_interface ? "online" : "offline");
                 (void)send_ipc_infof(pfd.fd, "  door_control_b2: %s", device_status.door_control_b2 ? "online" : "offline");
@@ -473,7 +634,7 @@ int main(int argc, char ** argv)
                 (void)send_ipc_infof(pfd.fd, "Das Portal ist noch nicht vollständig implementiert. Auf Wiedersehen!");
 
                 // after a status message, we can just drop the client connection
-                remove_ipc_client(i);
+                remove_ipc_client(pfd_index);
                 break;
               }
 
@@ -481,7 +642,7 @@ int main(int argc, char ** argv)
               {
                 // Invalid message received. Print error message and kick the client
                 log_print(LSS_IPC, LL_WARNING, "received invalid ipc message of type %u", msg.type);
-                remove_ipc_client(i);
+                remove_ipc_client(pfd_index);
                 break;
               }
               }
@@ -528,6 +689,64 @@ int main(int argc, char ** argv)
   }
 
   return EXIT_SUCCESS;
+}
+
+#define MAX_SIGNAL_RINGBUFFER_ITEMS 64
+static struct
+{
+  uint32_t       read_offset, size;
+  enum SM_Signal signals[MAX_SIGNAL_RINGBUFFER_ITEMS];
+  uint32_t       client_ids[MAX_SIGNAL_RINGBUFFER_ITEMS];
+} signal_ring_buffer = {
+    .read_offset = 0,
+    .size        = 0,
+};
+
+static bool push_signal(enum SM_Signal sig, uint32_t client_id)
+{
+  if (signal_ring_buffer.size >= MAX_SIGNAL_RINGBUFFER_ITEMS)
+    return false;
+
+  size_t write_index                         = (signal_ring_buffer.read_offset + signal_ring_buffer.size) % MAX_SIGNAL_RINGBUFFER_ITEMS;
+  signal_ring_buffer.signals[write_index]    = sig;
+  signal_ring_buffer.client_ids[write_index] = client_id;
+  signal_ring_buffer.size += 1;
+
+  return true;
+}
+
+static bool pop_signal(enum SM_Signal * sig, uint32_t * client_id)
+{
+  assert(sig != NULL);
+  assert(client_id != NULL);
+  if (signal_ring_buffer.size == 0)
+    return false;
+
+  *sig       = signal_ring_buffer.signals[signal_ring_buffer.read_offset];
+  *client_id = signal_ring_buffer.client_ids[signal_ring_buffer.read_offset];
+
+  signal_ring_buffer.size -= 1;
+  signal_ring_buffer.read_offset += 1;
+  signal_ring_buffer.read_offset %= MAX_SIGNAL_RINGBUFFER_ITEMS;
+
+  return true;
+}
+
+void state_machine_signal_handler(void * user_data, void * context, enum SM_Signal signal)
+{
+  (void)user_data; // is always NULL anyways
+
+  uint32_t client_id;
+  if (context != NULL) {
+    client_id = *(uint32_t *)context;
+  }
+  else {
+    client_id = INVALID_IPC_CLIENT;
+  }
+
+  if (!push_signal(signal, client_id)) {
+    log_print(LSS_SYSTEM, LL_ERROR, "Could not handle signal from state machine: ring buffer full!");
+  }
 }
 
 static bool send_ipc_info(int fd, char const * text)
@@ -587,6 +806,8 @@ static bool send_mqtt_msg(char const * topic, char const * data)
   assert(topic != NULL);
   assert(data != NULL);
 
+  log_print(LSS_SYSTEM, LL_VERBOSE, "Sending mqtt message '%s': %s", topic, data);
+
   if (!mqtt_client_is_connected(mqtt_client)) {
     log_print(LSS_MQTT, LL_ERROR, "failed to publish message to mqtt server: not connected.");
     return false;
@@ -615,39 +836,35 @@ static bool parse_system_status(char const * status)
   return false;
 }
 
-static enum DoorStatus parse_door_status(char const * status)
-{
-  if (streq(status, PORTAL300_STATUS_DOOR_LOCKED))
-    return DOOR_LOCKED;
-  if (streq(status, PORTAL300_STATUS_DOOR_CLOSED))
-    return DOOR_CLOSED;
-  if (streq(status, PORTAL300_STATUS_DOOR_OPENED))
-    return DOOR_OPEN;
-  log_print(LSS_SYSTEM, LL_WARNING, "Received invalid door status: '%s'", status);
-  return DOOR_UNOBSERVED;
-}
-
 //! Handles all incoming MQTT messages
 static void mqtt_handle_message(void * user_data, char const * topic, char const * data)
 {
   (void)user_data;
 
+  log_print(LSS_SYSTEM, LL_VERBOSE, "Received mqtt message '%s': %s", topic, data);
+
   if (streq(topic, PORTAL300_TOPIC_EVENT_DOORBELL)) {
-    if (is_shack_open_safe()) {
-      log_print(LSS_SYSTEM, LL_MESSAGE, "Priming front door unlock.");
-      trigger_unlock_door = true;
-    }
-    else {
-      log_print(LSS_SYSTEM, LL_WARNING, "Received doorbell event outside opening times.");
-    }
+    sm_apply_event(&global_state_machine, EVENT_DOORBELL_FRONT, NULL);
   }
   else if (streq(topic, PORTAL300_TOPIC_STATUS_DOOR_B2)) {
-    door_state.b2 = parse_door_status(data);
-    log_print(LSS_SYSTEM, LL_MESSAGE, "door B2 is now %s", door_status_name(door_state.b2));
+    if (streq(data, PORTAL300_STATUS_DOOR_LOCKED))
+      sm_apply_event(&global_state_machine, EVENT_DOOR_B2_LOCKED, NULL);
+    else if (streq(data, PORTAL300_STATUS_DOOR_CLOSED))
+      sm_apply_event(&global_state_machine, EVENT_DOOR_B2_CLOSED, NULL);
+    else if (streq(data, PORTAL300_STATUS_DOOR_OPENED))
+      sm_apply_event(&global_state_machine, EVENT_DOOR_B2_OPENED, NULL);
+    else
+      log_print(LSS_SYSTEM, LL_WARNING, "door B2 status update sent invalid status: %s", data);
   }
   else if (streq(topic, PORTAL300_TOPIC_STATUS_DOOR_C2)) {
-    door_state.c2 = parse_door_status(data);
-    log_print(LSS_SYSTEM, LL_MESSAGE, "door C2 is now %s", door_status_name(door_state.c2));
+    if (streq(data, PORTAL300_STATUS_DOOR_LOCKED))
+      sm_apply_event(&global_state_machine, EVENT_DOOR_C2_LOCKED, NULL);
+    else if (streq(data, PORTAL300_STATUS_DOOR_CLOSED))
+      sm_apply_event(&global_state_machine, EVENT_DOOR_C2_CLOSED, NULL);
+    else if (streq(data, PORTAL300_STATUS_DOOR_OPENED))
+      sm_apply_event(&global_state_machine, EVENT_DOOR_C2_OPENED, NULL);
+    else
+      log_print(LSS_SYSTEM, LL_WARNING, "door C2 status update sent invalid status: %s", data);
   }
   else if (streq(topic, PORTAL300_TOPIC_STATUS_SSH_INTERFACE)) {
     device_status.ssh_interface = parse_system_status(data);
@@ -664,6 +881,23 @@ static void mqtt_handle_message(void * user_data, char const * topic, char const
   else if (streq(topic, PORTAL300_TOPIC_STATUS_BUSCH_INTERFACE)) {
     device_status.busch_interface = parse_system_status(data);
     log_print(LSS_SYSTEM, LL_MESSAGE, "device 'busch interface' is now %s", device_status.busch_interface ? "online" : "offline");
+  }
+  else if (streq(topic, PORTAL300_TOPIC_EVENT_BUTTON)) {
+    if (streq(data, DOOR_NAME(DOOR_B2)))
+      sm_apply_event(&global_state_machine, EVENT_BUTTON_B2, NULL);
+    else if (streq(data, DOOR_NAME(DOOR_C2)))
+      sm_apply_event(&global_state_machine, EVENT_BUTTON_C2, NULL);
+    else
+      log_print(LSS_SYSTEM, LL_WARNING, "Received button event for unhandled door %s", data);
+  }
+  else if (streq(topic, PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE)) {
+    // Silently ignore message
+  }
+  else if (streq(topic, PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE)) {
+    // Silently ignore message
+  }
+  else if (streq(topic, PORTAL300_TOPIC_ACTION_LOCK_DOOR)) {
+    // Silently ignore message
   }
   else {
     log_print(LSS_SYSTEM, LL_WARNING, "Received data for unhandled topic '%s': %s", topic, data);
@@ -786,7 +1020,30 @@ static size_t add_ipc_client(int fd)
       .revents = 0,
   };
 
+  ipc_client_info_storage[index] = (struct IpcClientInfo){
+      .client_id        = fetch_next_client_id(),
+      .disconnect_flags = 0,
+      .forward_logs     = false,
+
+      .nick_name = NULL,
+      .full_name = NULL,
+      .member_id = -1,
+  };
+
   return index;
+}
+
+static void remove_all_ipc_clients(uint32_t disconnect_flags)
+{
+  size_t i = POLLFD_FIRST_IPC;
+  while (i < pollfds_size) {
+    if (ipc_client_info_storage[i].disconnect_flags & disconnect_flags) {
+      remove_ipc_client(i);
+    }
+    else {
+      i += 1;
+    }
+  }
 }
 
 static void remove_ipc_client(size_t index)
@@ -799,12 +1056,17 @@ static void remove_ipc_client(size_t index)
     log_perror(LSS_IPC, LL_ERROR, "failed to close ipc client");
   }
 
+  free(ipc_client_info_storage[index].nick_name);
+  free(ipc_client_info_storage[index].full_name);
+
   // swap-remove with the last index
   // NOTE: This doesn't hurt us when (index == pollfds_size-1), as we're gonna wipe the element then anyways
-  pollfds[index] = pollfds[pollfds_size - 1];
+  pollfds[index]                 = pollfds[pollfds_size - 1];
+  ipc_client_info_storage[index] = ipc_client_info_storage[pollfds_size - 1];
 
   pollfds_size -= 1;
   memset(&pollfds[pollfds_size], 0xAA, sizeof(struct pollfd));
+  memset(&ipc_client_info_storage[pollfds_size], 0xAA, sizeof(struct IpcClientInfo));
 }
 
 static void close_ipc_sock()
@@ -974,13 +1236,61 @@ static void print_usage(FILE * stream)
   fprintf(stream, usage_msg);
 }
 
-static char const * door_status_name(enum DoorStatus status)
+static uint32_t find_ipc_client_by_id(uint32_t client_id)
 {
-  static const char * const door_names[] = {
-      [DOOR_LOCKED]     = "abgeschlossen",
-      [DOOR_CLOSED]     = "geschlossen",
-      [DOOR_OPEN]       = "offen",
-      [DOOR_UNOBSERVED] = "unbekannt",
-  };
-  return door_names[status];
+  for (size_t i = POLLFD_FIRST_IPC; i < pollfds_size; i++) {
+    if (ipc_client_info_storage[i].client_id == client_id) {
+      return i;
+    }
+  }
+  return INVALID_IPC_CLIENT;
+}
+
+//! Stores the next valid ipc client id. All values are valid except for
+//! `INVALID_IPC_CLIENT`. Assumption made: Not more than `intMax(uint32_t)-1`
+//! clients are connected at the same time which should be possible.
+static uint32_t next_ipc_client_id = 0;
+
+static uint32_t fetch_next_client_id(void)
+{
+  uint32_t next = next_ipc_client_id;
+
+_increment_id:
+  next_ipc_client_id += 1;
+  if (next_ipc_client_id == INVALID_IPC_CLIENT) {
+    next_ipc_client_id += 1;
+  }
+
+  // search through the array of all active clients.
+  // If the next ID is still in use, continue incrementing until we can be safe that the
+  // client id is not used.
+  for (size_t i = POLLFD_FIRST_IPC; i < pollfds_size; i++) {
+    if (ipc_client_info_storage[i].client_id == next_ipc_client_id) {
+      goto _increment_id;
+    }
+  }
+
+  return next;
+}
+
+void print_log_to_ipc_clients(void * user_data, enum LogSubSystem subsystem, enum LogLevel level, char const * msg)
+{
+  (void)user_data; // we don't need that
+
+  for (size_t i = POLLFD_FIRST_IPC; i < pollfds_size; i++) {
+    if (ipc_client_info_storage[i].forward_logs) {
+
+      if (subsystem == LSS_SYSTEM && level == LL_MESSAGE) {
+        send_ipc_info(pollfds[i].fd, msg);
+      }
+      else {
+        send_ipc_infof(
+            pollfds[i].fd,
+            "[%s] [%s] %s",
+            log_get_level_name(level),
+            log_get_subsystem_name(subsystem),
+            msg);
+      }
+    }
+  }
 }

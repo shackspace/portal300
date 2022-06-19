@@ -10,27 +10,29 @@
 #define ANSI_COLOR_GRAY   "\x1B[0;35m"
 #define ANSI_COLOR_RESET  "\x1B[0m"
 
-static char const * const log_level_names[] =
-    {
-        [LL_ERROR]   = "ERROR",
-        [LL_WARNING] = "WARNING",
-        [LL_MESSAGE] = "MESSAGE",
-        [LL_VERBOSE] = "VERBOSE",
-};
-
-static char const * const subsystem_names[] =
-    {
-        [LSS_GENERIC] = "generic",
-        [LSS_MQTT]    = "mqtt",
-        [LSS_LOGIC]   = "logic",
-        [LSS_GPIO]    = "gpio",
-        [LSS_SYSTEM]  = "system",
-        [LSS_IPC]     = "ipc",
+static enum LogLevel subsystem_max_level[] = {
+    [LSS_GENERIC] = LL_VERBOSE,
+    [LSS_MQTT]    = LL_VERBOSE,
+    [LSS_LOGIC]   = LL_VERBOSE,
+    [LSS_GPIO]    = LL_VERBOSE,
+    [LSS_SYSTEM]  = LL_VERBOSE,
+    [LSS_IPC]     = LL_VERBOSE,
 };
 
 static void log_write_stderr(void * user_data, enum LogSubSystem subsystem, enum LogLevel level, char const * msg);
 
 enum LogLevel log_level = LL_MESSAGE;
+
+static enum LogLevel effective_log_level(enum LogSubSystem subsystem)
+{
+  enum LogLevel ll = subsystem_max_level[subsystem];
+  if (ll > log_level) {
+    return log_level;
+  }
+  else {
+    return ll;
+  }
+}
 
 static struct LogConsumer * log_consumers = NULL;
 
@@ -50,6 +52,11 @@ void log_deinit(void)
   // nothing to do here yet
 }
 
+void log_set_level(enum LogSubSystem subsystem, enum LogLevel level)
+{
+  subsystem_max_level[subsystem] = level;
+}
+
 void log_register_consumer(struct LogConsumer * consumer)
 {
   assert(consumer != NULL);
@@ -63,6 +70,10 @@ void log_register_consumer(struct LogConsumer * consumer)
 void log_write(enum LogSubSystem subsystem, enum LogLevel level, char const * msg)
 {
   assert(msg != NULL);
+
+  // filter messages by log level. subsystems can have filtered levels
+  if (level > effective_log_level(subsystem))
+    return;
 
   struct LogConsumer * it = log_consumers;
   while (it != NULL) {
@@ -116,5 +127,35 @@ static void log_write_stderr(void * user_data, enum LogSubSystem subsystem, enum
   case LL_VERBOSE: color = ANSI_COLOR_GRAY; break;
   }
 
-  fprintf(stderr, "[%s%s%s] [%s] %s\n", color, log_level_names[level], ANSI_COLOR_RESET, subsystem_names[subsystem], msg);
+  fprintf(stderr, "[%s%s%s] [%s] %s\n", color, log_get_level_name(level), ANSI_COLOR_RESET, log_get_subsystem_name(subsystem), msg);
+}
+
+char const * log_get_subsystem_name(enum LogSubSystem subsystem)
+{
+  if (subsystem == LSS_GENERIC)
+    return "generic";
+  if (subsystem == LSS_MQTT)
+    return "mqtt";
+  if (subsystem == LSS_LOGIC)
+    return "logic";
+  if (subsystem == LSS_GPIO)
+    return "gpio";
+  if (subsystem == LSS_SYSTEM)
+    return "system";
+  if (subsystem == LSS_IPC)
+    return "ipc";
+  return "<<INVALID>>";
+}
+
+char const * log_get_level_name(enum LogLevel level)
+{
+  if (level == LL_ERROR)
+    return "ERROR";
+  if (level == LL_WARNING)
+    return "WARNING";
+  if (level == LL_MESSAGE)
+    return "MESSAGE";
+  if (level == LL_VERBOSE)
+    return "VERBOSE";
+  return "<<INVALID>>";
 }

@@ -34,9 +34,11 @@ enum SM_Signal
   SIGNAL_OPEN_DOOR_C2_SAFE,   // opens door C2 permanently, with automatic close after 60 seconds if not opened
   SIGNAL_OPEN_DOOR_B2_UNSAFE, // opens door B2 permanently, without waiting for any event
   SIGNAL_OPEN_DOOR_C2_UNSAFE, // opens door C2 permanently, without waiting for any event
-  SIGNAL_CLOSE_ALL,           // closes all closable doors
+  SIGNAL_LOCK_ALL,            // lock all lockable doors
 
   SIGNAL_CHANGE_KEYHOLDER, // the shack is already open, but we transfer the key holder right
+  SIGNAL_STATE_CHANGE,     // the shack changed it's open state
+  SIGNAL_NO_STATE_CHANGE,  // A state change was requested, but that state is already present
 
   SIGNAL_UNLOCK_SUCCESSFUL, // shackspace was successfully unlocked
   SIGNAL_LOCK_SUCCESSFUL,   // shackspace was successfully locked
@@ -47,30 +49,48 @@ enum SM_Signal
 
 enum DoorState
 {
-  DOOR_OPEN   = 0,
-  DOOR_CLOSED = 1,
-  DOOR_LOCKED = 2,
+  DOOR_UNOBSERVED = 0,
+  DOOR_OPEN       = 1,
+  DOOR_CLOSED     = 2,
+  DOOR_LOCKED     = 3,
 };
 
 enum ShackState
 {
-  SHACK_OPEN            = 0,
-  SHACK_UNLOCKED_VIA_B2 = 1,
-  SHACK_UNLOCKED_VIA_C2 = 2,
-  SHACK_LOCKED          = 3,
+  SHACK_UNOBSERVED      = 0,
+  SHACK_OPEN            = 1,
+  SHACK_UNLOCKED_VIA_B2 = 2,
+  SHACK_UNLOCKED_VIA_C2 = 3,
+  SHACK_LOCKED          = 4,
 };
+
+struct StateMachine;
+
+//! Signal handler callback
+//! - `user_data` is the pointer passed into `sm_init`,
+//! - `context` is the pointer passed into `sm_apply_event`.
+//! - `signal` is the response from the state machine
+typedef void (*StateMachineSignal)(void * user_data, void * context, enum SM_Signal signal);
 
 struct StateMachine
 {
-  int            state;
-  enum DoorState door_c2;
-  enum DoorState door_b2;
+  int             state;
+  enum DoorState  door_c2;
+  enum DoorState  door_b2;
+  enum ShackState last_shack_state;
+
+  StateMachineSignal on_signal;
+  void *             user_data;
 };
 
-void sm_init(struct StateMachine * sm);
+void sm_init(struct StateMachine * sm, StateMachineSignal signal_handler, void * user_data);
 
-void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_context);
+void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * context);
 
-enum ShackState sm_get_state(struct StateMachine const * sm);
+enum ShackState sm_get_shack_state(struct StateMachine const * sm);
+
+char const * sm_shack_state_name(enum ShackState state);
+char const * sm_door_state_name(enum DoorState state);
+char const * sm_state_name(struct StateMachine const * sm);
 
 #endif

@@ -1,5 +1,8 @@
 #include "state-machine.h"
 
+#include <assert.h>
+#include <stddef.h>
+
 enum State
 {
   STATE_IDLE,
@@ -8,15 +11,22 @@ enum State
   STATE_WAIT_FOR_OPEN_VIA_C,
 };
 
-void sm_init(struct StateMachine * sm)
+void sm_init(struct StateMachine * sm, StateMachineSignal signal_handler, void * user_data)
 {
+  assert(sm != NULL);
+  assert(signal_handler != NULL);
   *sm = (struct StateMachine){
       .state = STATE_IDLE,
 
-      .door_c2 = DOOR_OPEN,
-      .door_b2 = DOOR_OPEN,
+      .door_c2          = DOOR_UNOBSERVED,
+      .door_b2          = DOOR_UNOBSERVED,
+      .last_shack_state = SHACK_UNOBSERVED,
+
+      .on_signal = signal_handler,
+      .user_data = user_data,
   };
 }
+
 static bool is_open_request(enum SM_Event event)
 {
   if (event == EVENT_SSH_OPEN_FRONT_REQUEST)
@@ -110,8 +120,9 @@ static void sm_change_door_state(struct StateMachine * sm, enum SM_Event event)
   }
 }
 
-static void send_signal(struct StateMachine * sm, void * user_context, enum SM_Signal signal)
+static void send_signal(struct StateMachine * sm, void * context, enum SM_Signal signal)
 {
+  sm->on_signal(sm->user_data, context, signal);
 }
 
 void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_context)
@@ -120,10 +131,17 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
   // of shackspace!
   sm_change_door_state(sm, event);
 
-  enum ShackState shack_state = sm_get_state(sm);
+  enum ShackState shack_state = sm_get_shack_state(sm);
   enum State      sm_state    = sm->state;
 
 #define SIGNAL(_Signal) send_signal(sm, user_context, _Signal)
+
+  // Check if the shack space changed its state
+  if (shack_state != sm->last_shack_state) {
+    sm->last_shack_state = shack_state;
+    SIGNAL(SIGNAL_STATE_CHANGE);
+    // don't return here, this is just a notification!
+  }
 
   if (event == EVENT_DOOR_B2_OPENED && shack_state != SHACK_OPEN && sm_state == STATE_WAIT_FOR_OPEN_VIA_B) {
     // after a request to unlock via B2, door B2 was successfully opened by a user, now unlock the other door:
@@ -196,7 +214,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
   if (is_close_request(event, shack_state) && shack_state != SHACK_LOCKED && sm_state == STATE_IDLE) {
     // Any close request immediatly triggers a closing process when nothing else is happening right now
     sm->state = STATE_WAIT_FOR_LOCKED;
-    SIGNAL(SIGNAL_CLOSE_ALL);
+    SIGNAL(SIGNAL_LOCK_ALL);
     return;
   }
 
@@ -206,11 +224,20 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
     return;
   }
 
+  if (event == EVENT_SSH_CLOSE_REQUEST && shack_state == SHACK_LOCKED) {
+    SIGNAL(SIGNAL_NO_STATE_CHANGE);
+    return;
+  }
+
 #undef SIGNAL
 }
 
-enum ShackState sm_get_state(struct StateMachine const * sm)
+enum ShackState sm_get_shack_state(struct StateMachine const * sm)
 {
+  if (sm->door_c2 == DOOR_UNOBSERVED || sm->door_b2 == DOOR_UNOBSERVED) {
+    return SHACK_UNOBSERVED;
+  }
+
   bool locked_b2 = (sm->door_b2 == DOOR_LOCKED);
   bool locked_c2 = (sm->door_c2 == DOOR_LOCKED);
 
@@ -222,4 +249,46 @@ enum ShackState sm_get_state(struct StateMachine const * sm)
     return SHACK_UNLOCKED_VIA_C2;
   else
     return SHACK_UNLOCKED_VIA_B2;
+}
+
+char const * sm_shack_state_name(enum ShackState state)
+{
+  if (state == SHACK_UNOBSERVED)
+    return "unobserved";
+  if (state == SHACK_OPEN)
+    return "open";
+  if (state == SHACK_UNLOCKED_VIA_B2)
+    return "unlocked via b2";
+  if (state == SHACK_UNLOCKED_VIA_C2)
+    return "unlocked via c2";
+  if (state == SHACK_LOCKED)
+    return "locked";
+  return "<<INVALID>>";
+}
+
+char const * sm_door_state_name(enum DoorState state)
+{
+  if (state == DOOR_LOCKED)
+    return "locked";
+  if (state == DOOR_UNOBSERVED)
+    return "unobserved";
+  if (state == DOOR_OPEN)
+    return "open";
+  if (state == DOOR_CLOSED)
+    return "closed";
+  return "<<INVALID>>";
+}
+
+char const * sm_state_name(struct StateMachine const * sm)
+{
+  if (sm->state == STATE_IDLE)
+    return "idle";
+  if (sm->state == STATE_WAIT_FOR_OPEN_VIA_B)
+    return "wait for shack entry via B";
+  if (sm->state == STATE_WAIT_FOR_OPEN_VIA_C)
+    return "wait for shack entry via C";
+  if (sm->state == STATE_WAIT_FOR_LOCKED)
+    return "wait for shack locked";
+
+  return "<<INVALID>>";
 }
