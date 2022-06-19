@@ -143,6 +143,13 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
     // don't return here, this is just a notification!
   }
 
+  if (event == EVENT_TIMEOUT && sm_state != STATE_IDLE) {
+    // the requested action timed out
+    sm->state = STATE_IDLE;
+    SIGNAL(SIGNAL_USER_REQUESTED_TIMED_OUT);
+    return;
+  }
+
   if (event == EVENT_DOOR_B2_OPENED && shack_state != SHACK_OPEN && sm_state == STATE_WAIT_FOR_OPEN_VIA_B) {
     // after a request to unlock via B2, door B2 was successfully opened by a user, now unlock the other door:
     SIGNAL(SIGNAL_OPEN_DOOR_C2_UNSAFE);
@@ -158,6 +165,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
   if (is_door_unlock_event(event, DOOR_ANY) && shack_state == SHACK_OPEN && is_state_wait_for_open(sm_state)) {
     // unlock process completed, both doors open
     sm->state = STATE_IDLE;
+    SIGNAL(SIGNAL_CANCEL_TIMEOUT);
     SIGNAL(SIGNAL_OPEN_SUCCESSFUL);
     return;
   }
@@ -165,6 +173,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
   if (is_door_lock_event(event, DOOR_ANY) && shack_state == SHACK_LOCKED && sm_state == STATE_WAIT_FOR_LOCKED) {
     // lock successful
     sm->state = STATE_IDLE;
+    SIGNAL(SIGNAL_CANCEL_TIMEOUT);
     SIGNAL(SIGNAL_LOCK_SUCCESSFUL);
     return;
   }
@@ -192,6 +201,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
   if (event == EVENT_SSH_OPEN_FRONT_REQUEST && shack_state == SHACK_LOCKED && sm_state == STATE_IDLE) {
     // When shack is closed and open is requested, let the user in and begin unlocking the door.
     sm->state = STATE_WAIT_FOR_OPEN_VIA_B;
+    SIGNAL(SIGNAL_START_TIMEOUT);
     SIGNAL(SIGNAL_OPEN_DOOR_B2_SAFE);
     SIGNAL(SIGNAL_OPEN_DOOR_B);
     return;
@@ -200,6 +210,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
   if (event == EVENT_SSH_OPEN_BACK_REQUEST && shack_state == SHACK_LOCKED && sm_state == STATE_IDLE) {
     // When shack is closed and open is requested, let the user in and begin unlocking the door.
     sm->state = STATE_WAIT_FOR_OPEN_VIA_C;
+    SIGNAL(SIGNAL_START_TIMEOUT);
     SIGNAL(SIGNAL_OPEN_DOOR_C2_SAFE);
     SIGNAL(SIGNAL_OPEN_DOOR_C);
     return;
@@ -214,6 +225,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
   if (is_close_request(event, shack_state) && shack_state != SHACK_LOCKED && sm_state == STATE_IDLE) {
     // Any close request immediatly triggers a closing process when nothing else is happening right now
     sm->state = STATE_WAIT_FOR_LOCKED;
+    SIGNAL(SIGNAL_START_TIMEOUT);
     SIGNAL(SIGNAL_LOCK_ALL);
     return;
   }
@@ -226,6 +238,12 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
 
   if (event == EVENT_SSH_CLOSE_REQUEST && shack_state == SHACK_LOCKED) {
     SIGNAL(SIGNAL_NO_STATE_CHANGE);
+    return;
+  }
+
+  if (is_ssh_request(event)) {
+    // we currently cannot take requests, as we're still performing a process
+    SIGNAL(SIGNAL_CANNOT_HANDLE_REQUEST);
     return;
   }
 

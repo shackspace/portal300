@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+#define STATE_MACHINE_TIMEOUT_MS 120000 // ms
+
 enum SM_Event
 {
   // door status changes:
@@ -24,6 +26,7 @@ enum SM_Event
 
   // other events
   EVENT_DOORBELL_FRONT, // Someone rang the door bell.
+  EVENT_TIMEOUT,        // The requested timeout happened
 };
 
 enum SM_Signal
@@ -44,7 +47,11 @@ enum SM_Signal
   SIGNAL_LOCK_SUCCESSFUL,   // shackspace was successfully locked
   SIGNAL_OPEN_SUCCESSFUL,   // shackspace was successfully opened
 
-  SIGNAL_CANNOT_HANDLE_REQUEST, // we cannot handle the request right now, as something is still in progress
+  SIGNAL_CANNOT_HANDLE_REQUEST,    // we cannot handle the request right now, as something is still in progress
+  SIGNAL_USER_REQUESTED_TIMED_OUT, // the request that is currently processed has timed out
+
+  SIGNAL_START_TIMEOUT,  // a timeout is requested by the state machine. apply `EVENT_TIMEOUT` after `STATE_MACHINE_TIMEOUT_MS` milliseconds
+  SIGNAL_CANCEL_TIMEOUT, // a previously started timeout should be cancelled
 };
 
 enum DoorState

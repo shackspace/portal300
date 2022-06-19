@@ -63,6 +63,7 @@ enum IpcDisconnectFlag
   IPC_DISCONNECT_ON_LOCKED    = (1 << 0),
   IPC_DISCONNECT_ON_OPEN      = (1 << 1),
   IPC_DISCONNECT_ON_NO_CHANGE = (1 << 2),
+  IPC_DISCONNECT_ON_ERROR     = (1 << 3),
 };
 
 struct IpcClientInfo
@@ -78,13 +79,15 @@ struct IpcClientInfo
 
 static volatile sig_atomic_t shutdown_requested = 0;
 
-static int ipc_sock = -1;
+static int ipc_sock   = -1;
+static int sm_timerfd = -1;
 
 static struct MqttClient * mqtt_client = NULL;
 
-#define POLLFD_IPC       0  // well defined fd, always the unix socket for IPC
-#define POLLFD_MQTT      1  // well defined fd, either the timerfd for reconnecting MQTT or the socket for MQTT communications
-#define POLLFD_FIRST_IPC 2  // First ipc client socket slot
+#define POLLFD_IPC       0  // well defined fd: always the unix socket for IPC
+#define POLLFD_MQTT      1  // well defined fd: either the timerfd for reconnecting MQTT or the socket for MQTT communications
+#define POLLFD_SM_TIMER  2  // well defined fd: timerfd for answering state machine requests
+#define POLLFD_FIRST_IPC 3  // First ipc client socket slot
 #define POLLFD_LIMIT     32 // number of maximum socket connections
 
 //! Stack array of pollfds. Everything below POLLFD_FIRST_IPC is pre-intialized and has a static purpose
@@ -119,8 +122,8 @@ static bool send_mqtt_msg(char const * topic, char const * data);
 
 static void mqtt_handle_message(void * user_data, char const * topic, char const * data);
 
-// static bool disarm_timer(int timer);
-// static bool arm_timer(int timer, bool oneshot, uint32_t ms);
+static bool disarm_timer(int timer);
+static bool arm_timer(int timer, bool oneshot, uint32_t ms);
 
 static bool parse_cli(int argc, char ** argv, struct CliOptions * args);
 
@@ -150,39 +153,41 @@ static struct LogConsumer ipc_client_logger = {
     .user_data = NULL,
 };
 
+static void close_sm_timerfd(void);
+
 int main(int argc, char ** argv)
 {
   // Initialize libraries and dependencies:
-
-  sm_init(&global_state_machine, state_machine_signal_handler, NULL);
-
   if (!log_init()) {
     fprintf(stderr, "failed to initialize logging.\n");
     return EXIT_FAILURE;
   }
 
+  sm_init(&global_state_machine, state_machine_signal_handler, NULL);
+
   log_set_level(LSS_IPC, LL_WARNING);
+
+  sm_timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
+  if (sm_timerfd == -1) {
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to create state machine timerfd");
+    return EXIT_FAILURE;
+  }
+  atexit(close_sm_timerfd);
+
+  pollfds[POLLFD_SM_TIMER] = (struct pollfd){
+      .fd     = sm_timerfd,
+      .events = POLLIN,
+  };
 
   if (!install_signal_handlers()) {
     log_print(LSS_SYSTEM, LL_ERROR, "failed to install signal handlers.");
-    exit(EXIT_FAILURE);
+    return EXIT_FAILURE;
   }
 
   if (!mqtt_client_init()) {
     log_write(LSS_MQTT, LL_ERROR, "failed to initialize mqtt client library. aborting.");
     return EXIT_FAILURE;
   }
-
-  (void)argc;
-  (void)argv;
-
-  // struct CliOptions const cli = {
-  //     .host_name       = "mqtt.portal.shackspace.de",
-  //     .port            = 8883,
-  //     .ca_cert_file    = "debug/ca.crt",
-  //     .client_key_file = "debug/client.key",
-  //     .client_crt_file = "debug/client.crt",
-  // };
 
   struct CliOptions cli;
   if (!parse_cli(argc, argv, &cli)) {
@@ -394,6 +399,21 @@ int main(int argc, char ** argv)
           log_print(LSS_SYSTEM, LL_MESSAGE, "shackspace is still %s", sm_shack_state_name(sm_get_shack_state(&global_state_machine)));
           remove_all_ipc_clients(IPC_DISCONNECT_ON_NO_CHANGE);
           break;
+
+        case SIGNAL_START_TIMEOUT:
+          log_print(LSS_SYSTEM, LL_VERBOSE, "handling timeout request. timeout is in %d ms.", STATE_MACHINE_TIMEOUT_MS);
+          arm_timer(sm_timerfd, true, STATE_MACHINE_TIMEOUT_MS);
+          break;
+
+        case SIGNAL_CANCEL_TIMEOUT:
+          log_print(LSS_SYSTEM, LL_VERBOSE, "cancelling timeout request.");
+          disarm_timer(sm_timerfd);
+          break;
+
+        case SIGNAL_USER_REQUESTED_TIMED_OUT:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Requested operation timed out. Not able to lock/open shackspace!");
+          remove_all_ipc_clients(IPC_DISCONNECT_ON_ERROR);
+          break;
         }
       }
     }
@@ -480,6 +500,19 @@ int main(int argc, char ** argv)
           break;
         }
 
+        case POLLFD_SM_TIMER:
+        {
+          printf("ready?\n");
+          if (fetch_timer_fd(pfd.fd)) {
+            sm_apply_event(&global_state_machine, EVENT_TIMEOUT, NULL);
+          }
+          else {
+            log_perror(LSS_SYSTEM, LL_ERROR, "failed to fetch state machine timerfd");
+          }
+
+          break;
+        }
+
         // IPC client message or error
         default:
         {
@@ -512,7 +545,7 @@ int main(int argc, char ** argv)
               case IPC_MSG_OPEN_FRONT:
               {
                 ipc_client_data->forward_logs = true;
-                ipc_client_data->disconnect_flags |= (IPC_DISCONNECT_ON_OPEN | IPC_DISCONNECT_ON_NO_CHANGE);
+                ipc_client_data->disconnect_flags |= (IPC_DISCONNECT_ON_OPEN | IPC_DISCONNECT_ON_NO_CHANGE | IPC_DISCONNECT_ON_ERROR);
 
                 size_t const nick_len = strnlen(msg.data.open.member_nick, IPC_MAX_NICK_LEN);
                 size_t const name_len = strnlen(msg.data.open.member_name, IPC_MAX_NAME_LEN);
@@ -587,7 +620,7 @@ int main(int argc, char ** argv)
               case IPC_MSG_CLOSE:
               {
                 ipc_client_data->forward_logs = true;
-                ipc_client_data->disconnect_flags |= (IPC_DISCONNECT_ON_LOCKED | IPC_DISCONNECT_ON_NO_CHANGE);
+                ipc_client_data->disconnect_flags |= (IPC_DISCONNECT_ON_LOCKED | IPC_DISCONNECT_ON_NO_CHANGE | IPC_DISCONNECT_ON_ERROR);
 
                 log_print(LSS_IPC, LL_MESSAGE, "client %zu requested portal close.", pfd_index);
 
@@ -954,53 +987,53 @@ static int create_reconnect_timeout_timer(int secs)
   return timer;
 }
 
-// static bool configure_timerfd(int timer, bool oneshot, uint32_t ms)
-// {
-//   assert(timer != -1);
+static bool configure_timerfd(int timer, bool oneshot, uint32_t ms)
+{
+  assert(timer != -1);
 
-//   const struct timespec given_ms = {
-//     .tv_sec = ms / 1000 ,
-//     .tv_nsec = 1000000 * (ms % 1000),
-//   };
+  const struct timespec given_ms = {
+      .tv_sec  = ms / 1000,
+      .tv_nsec = 1000000 * (ms % 1000),
+  };
 
-//   const struct timespec null_time = {
-//     .tv_sec = 0,
-//     .tv_nsec = 0,
-//   };
+  const struct timespec null_time = {
+      .tv_sec  = 0,
+      .tv_nsec = 0,
+  };
 
-//   struct itimerspec timeout;
-//   if(oneshot) {
-//     timeout = (struct itimerspec) {
-//       .it_value = given_ms,
-//       .it_interval = null_time,
-//     };
-//   }
-//   else {
-//     timeout = (struct itimerspec) {
-//       .it_value = given_ms,
-//       .it_interval = given_ms,
-//     };
-//   }
+  struct itimerspec timeout;
+  if (oneshot) {
+    timeout = (struct itimerspec){
+        .it_value    = given_ms,
+        .it_interval = null_time,
+    };
+  }
+  else {
+    timeout = (struct itimerspec){
+        .it_value    = given_ms,
+        .it_interval = given_ms,
+    };
+  }
 
-//   if(timerfd_settime(timer, 0, &timeout, NULL) == -1) {
-//     log_perror(LSS_SYSTEM, LL_ERROR, "failed to arm timerfd");
-//     log_print(LSS_SYSTEM, LL_ERROR, "destroying daemon, hoping for restart...");
-//     exit(EXIT_FAILURE);
-//   }
+  if (timerfd_settime(timer, 0, &timeout, NULL) == -1) {
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to arm timerfd");
+    log_print(LSS_SYSTEM, LL_ERROR, "destroying daemon, hoping for restart...");
+    exit(EXIT_FAILURE);
+  }
 
-//   return timer;
-// }
+  return timer;
+}
 
-// static bool disarm_timer(int timer)
-// {
-//   return configure_timerfd(timer, false, 0);
-// }
+static bool disarm_timer(int timer)
+{
+  return configure_timerfd(timer, false, 0);
+}
 
-// static bool arm_timer(int timer, bool oneshot, uint32_t ms)
-// {
-//   assert(ms > 0);
-//   return configure_timerfd(timer, oneshot, ms);
-// }
+static bool arm_timer(int timer, bool oneshot, uint32_t ms)
+{
+  assert(ms > 0);
+  return configure_timerfd(timer, oneshot, ms);
+}
 
 static size_t add_ipc_client(int fd)
 {
@@ -1290,4 +1323,12 @@ void print_log_to_ipc_clients(void * user_data, enum LogSubSystem subsystem, enu
       }
     }
   }
+}
+
+static void close_sm_timerfd(void)
+{
+  if (close(sm_timerfd) == -1) {
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to destroy state machine timerfd");
+  }
+  sm_timerfd = -1;
 }
