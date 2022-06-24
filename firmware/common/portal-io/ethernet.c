@@ -70,7 +70,7 @@ static void got_ip_event_handler(void * arg, esp_event_base_t event_base, int32_
   ESP_LOGI(TAG, "~~~~~~~~~~~");
 }
 
-void ethernet_init()
+void ethernet_init(char const * host_name)
 {
   // Initialize TCP/IP network interface (should be called only once in application)
   ESP_ERROR_CHECK(esp_netif_init());
@@ -80,6 +80,10 @@ void ethernet_init()
   // Create new default instance of esp-netif for Ethernet
   esp_netif_config_t cfg       = ESP_NETIF_DEFAULT_ETH();
   esp_netif_t *      eth_netif = esp_netif_new(&cfg);
+
+  if (host_name != NULL) {
+    ESP_ERROR_CHECK(esp_netif_set_hostname(eth_netif, host_name));
+  }
 
   // Init MAC and PHY configs to default
 

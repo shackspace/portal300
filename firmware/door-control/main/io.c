@@ -19,7 +19,7 @@
 #define PIN_IN_LOCKED GPIO_NUM_36
 #define PIN_IN_BUTTON GPIO_NUM_35
 
-static const bool output_active_high = false;
+static const bool output_active_high = true;
 
 static const gpio_config_t output_config = {
     .pin_bit_mask = (1ULL << PIN_OUT_OPEN) | (1ULL << PIN_OUT_CLOSE) | (1ULL << PIN_OUT_SIGNAL),
@@ -66,12 +66,22 @@ void io_init(IoInputChangedCallback callback)
 
 void io_set_open(bool state)
 {
-  ESP_ERROR_CHECK(gpio_set_level(PIN_OUT_OPEN, state ^ output_active_high));
+  ESP_ERROR_CHECK(gpio_set_level(PIN_OUT_OPEN, state ^ (!output_active_high)));
 }
 
 void io_set_close(bool state)
 {
-  ESP_ERROR_CHECK(gpio_set_level(PIN_OUT_OPEN, state ^ output_active_high));
+  ESP_ERROR_CHECK(gpio_set_level(PIN_OUT_CLOSE, state ^ (!output_active_high)));
+}
+
+void io_beep(uint32_t pattern)
+{
+  while (pattern != 0) {
+    ESP_ERROR_CHECK(gpio_set_level(PIN_OUT_SIGNAL, (pattern & 1)));
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+    pattern >>= 1;
+  }
+  ESP_ERROR_CHECK(gpio_set_level(PIN_OUT_SIGNAL, 0));
 }
 
 bool io_get_locked(void)

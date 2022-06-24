@@ -1,3 +1,5 @@
+PORT?=/dev/ttyUSB0
+
 all:
 	@echo "This makefile provides the following targets:"
 	@echo ""

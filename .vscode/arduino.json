@@ -1,0 +1,7 @@
+{
+    "configuration": "cpu=atmega328",
+    "board": "arduino:avr:nano",
+    "sketch": "firmware/door-sensor/door_sensor/door_sensor.ino",
+    "port": "/dev/ttyUSB1",
+    "programmer": "arduino:stk500"
+}

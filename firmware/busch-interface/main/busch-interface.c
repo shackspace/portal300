@@ -54,7 +54,7 @@ static const struct MqttConfig mqtt_config = {
 void app_main(void)
 {
   io_init();
-  ethernet_init();
+  ethernet_init("busch_interface");
   mqtt_init(&mqtt_config);
 
   while (1) {

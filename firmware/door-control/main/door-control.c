@@ -1,11 +1,10 @@
 #include <portal300/mqtt.h>
 #include <portal300/ethernet.h>
 #include <portal300.h>
-#include "freertos/portmacro.h"
-#include "freertos/projdefs.h"
 #include "io.h"
 #include "portal300.h"
 #include "state-machine.h"
+#include "mlx90393.h"
 
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
@@ -106,11 +105,54 @@ static void publish_door_status(enum DoorState state)
 
 void app_main(void)
 {
+  struct MLX90393 mlx;
+
+  if (!mlx90393_init(&mlx, MLX90393_DEFAULT_ADDR))
+    abort();
+
+  mlx90393_setGain(&mlx, MLX90393_GAIN_2_5X);
+  // You can check the gain too
+  printf("Gain set to: ");
+  switch (mlx90393_getGain(&mlx)) {
+  case MLX90393_GAIN_1X: printf("1 x\n"); break;
+  case MLX90393_GAIN_1_33X: printf("1.33 x\n"); break;
+  case MLX90393_GAIN_1_67X: printf("1.67 x\n"); break;
+  case MLX90393_GAIN_2X: printf("2 x\n"); break;
+  case MLX90393_GAIN_2_5X: printf("2.5 x\n"); break;
+  case MLX90393_GAIN_3X: printf("3 x\n"); break;
+  case MLX90393_GAIN_4X: printf("4 x\n"); break;
+  case MLX90393_GAIN_5X: printf("5 x\n"); break;
+  }
+
+  // Set resolution, per axis
+  mlx90393_setResolution(&mlx, MLX90393_X, MLX90393_RES_19);
+  mlx90393_setResolution(&mlx, MLX90393_Y, MLX90393_RES_19);
+  mlx90393_setResolution(&mlx, MLX90393_Z, MLX90393_RES_16);
+
+  // Set oversampling
+  mlx90393_setOversampling(&mlx, MLX90393_OSR_2);
+
+  // Set digital filtering
+  mlx90393_setFilter(&mlx, MLX90393_FILTER_6);
+
+  while (true) {
+    float x, y, z;
+    if (mlx90393_readData(&mlx, &x, &y, &z)) {
+      printf("x=%.2f\ty=%.2f\tz=%.2f\n", x, y, z);
+    }
+    else {
+      printf("failed to read sensor\n");
+    }
+  }
+}
+
+void app_main_wirklich(void)
+{
   event_group = xEventGroupCreate();
 
   io_init(io_changed_level);
 
-  ethernet_init();
+  ethernet_init("door_control_" CURRENT_DOOR); // CURRENT_DOOR is a string literal alias
   mqtt_init(&mqtt_config);
 
   enum DoorState door_state = get_door_state();
@@ -125,6 +167,8 @@ void app_main(void)
 
   TickType_t last_button_press_time = xTaskGetTickCount();
   bool       button_pressed         = false;
+
+  io_beep(IO_SHORT_BEEP_BEEP);
 
   while (1) {
     EventBits_t const current_state = xEventGroupWaitBits(

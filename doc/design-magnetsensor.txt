@@ -1,0 +1,57 @@
+
+
+Aufbau Experiment 1:
+
+- Hall-Sensor-Entwicklungsplatine flach auf Türe geklebt
+- Magnet auf hintere Seite der Türfalle geklebt (kein physischer Kontakt mit Türfalle möglich)
+
+Erkenntnisse Experiment 1:
+
+- Im unbewegten Zustand bleiben die Messwerte sehr stabil
+- Man kann zwischen "Türe geschlossen" und "Türe verschlossen" relativ gut unterscheiden
+- Klinke bewegen verändert massiv das Magnetfeld (da mechanisch mit der Türfalle gekoppelt)
+- Erdmagnetfeld war auf zwei Achsen massiv messbar
+  - Potentiell möglichkeit, Rotation der Türe zu erkennen durch niedrige Ablenkung auf der Achse (< 20 µT)
+- Es rauscht auf allen ganz schön, wenn man Schlüssel oder ähnliches in der Nähe bewegt
+- Es wurden keine Messungen mit Motorschloss vorgenommen (war nicht montiert)
+- "Distanz-Messung" ist potentiell ungeeignet und eine Messung über Winkel ggf. besser
+  - Winkeldistanz + Magnitude (Punktprodukt hilft)
+
+
+
+
+
+Neue Elektronik:
+
+  Hardware-Features:
+
+  - Uplink zum ESP32 via UART (GND, RXD, TXD, 3V3)
+  - Motorsteuerung aktivieren (Open, Close, GND)
+  - Sensor-Link (I²C) (GND, SDA, SCL, 3V3)
+
+ 
+
+IO32 => SCL
+IO33 => SDA
+IO12 => Beeper
+ IO4 => Motor Open  
+ IO2 => Motor Close (is a boot strapping pin, defaults to LOW)
+
+ DTR RX TX VCC CTS GNDp
+
+
+  TXD - ??       - EN
+  RXD - ??       - GND
+  IO0 - ??       - 3V3
+  GND -          - EN
+ IO39 - I     IO - CFG (IO32)
+ IO36 - I     IO - 485_EN (IO33)
+ IO15 - IO    ?? - RXD
+ IO14 - IO    ?? - TXD
+ IO12 - IO       - GND
+ IO35 - I        - 3V3
+  IO4 - IO       - GND
+  IO2 - IO       - 5V
+  GND -          - LINK
+
+

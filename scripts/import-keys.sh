@@ -6,7 +6,7 @@ set -e
 
 DEVICE="$1"
 CA_CERT="$2"
-ACTIONS="close open-front open-back"
+ACTIONS="close open-front open-back status"
 
 if [ -z "${DEVICE}" ]; then
   echo "Usage: import-keys.sh <device> <ca-cert>"
