@@ -4,12 +4,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define IO_SHORT_BEEP           0x01              // 200 ms
-#define IO_LONG_BEEP            0x07              // 600 ms
-#define IO_SHORT_BEEP_BEEP      0x05              // 200 ms on, off, on
-#define IO_SHORT_BEEP_BEEP_BEEP 0b10101           // 200 ms on, off, on
-#define IO_LONG_BEEP_BEEP       0xE7              // 600 ms on, 400 ms off, 600 ms on
-#define IO_LONG_BEEP_BEEP_BEEP  0b111000111000111 // 600 ms on/off for 3 times
+// predefined beep patterns:
+// will be played LSB to MSB until no more bits are set.
+// each bit is 200ms long, each set bit enables the beeper.
+#define IO_SHORT_BEEP           0b1
+#define IO_LONG_BEEP            0b111
+#define IO_SHORT_BEEP_BEEP      0b101
+#define IO_SHORT_BEEP_BEEP_BEEP 0b10101
+#define IO_LONG_BEEP_BEEP       0b11100111
+#define IO_LONG_BEEP_BEEP_BEEP  0b1110011100111
 #define IO_BEEP_ERROR           0b11101010111
 
 typedef void (*IoInputChangedCallback)(void);

@@ -14,7 +14,8 @@ all: bin/portal-daemon bin/portal-trigger
 
 install: bin/portal-daemon bin/portal-trigger
 	mkdir -p /opt/portal300/
-	cp bin/portal-daemon bin/portal-trigger /opt/portal300/
+	install -T bin/portal-daemon /opt/portal300/portal-daemon -m 555
+	install -T bin/portal-trigger /opt/portal300/portal-trigger -m 555
 
 bin/portal-daemon: obj/portal-daemon.o obj/mqtt-client.o obj/ipc.o obj/mqtt-mqtt.o obj/log.o obj/state-machine.o
 	$(LD) $(LFLAGS) -o "$@" $^ $(addprefix -l ,$(DAEMON_LIBS))

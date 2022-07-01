@@ -49,6 +49,7 @@ enum SM_Signal
 
   SIGNAL_CANNOT_HANDLE_REQUEST,    // we cannot handle the request right now, as something is still in progress
   SIGNAL_USER_REQUESTED_TIMED_OUT, // the request that is currently processed has timed out
+  SIGNAL_UNLOCK_TIMEOUT,           // nobody entered the space, and a door decided to auto-close the space again.
 
   SIGNAL_START_TIMEOUT,  // a timeout is requested by the state machine. apply `EVENT_TIMEOUT` after `STATE_MACHINE_TIMEOUT_MS` milliseconds
   SIGNAL_CANCEL_TIMEOUT, // a previously started timeout should be cancelled

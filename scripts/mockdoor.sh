@@ -8,19 +8,33 @@ set -e
 SCRIPT_ROOT="$(realpath "$(dirname "$0")")"
 door="${1,,}"
 
+if [ -z "${MOCKDOOR_CA}" ]; then
+  MOCKDOOR_CA="${SCRIPT_ROOT}/ca.crt"
+fi
+if [ -z "${MOCKDOOR_KEY}" ]; then
+  MOCKDOOR_KEY="${SCRIPT_ROOT}/client.key"
+fi
+if [ -z "${MOCKDOOR_CRT}" ]; then
+  MOCKDOOR_CRT="${SCRIPT_ROOT}/client.crt" 
+fi
+
 if [ -z "${door}" ]; then
   echo "usage: mockdoor.sh <door name>"
   exit 1
 fi
+
+echo "MOCKDOOR_CA  = ${MOCKDOOR_CA}"
+echo "MOCKDOOR_KEY = ${MOCKDOOR_KEY}"
+echo "MOCKDOOR_CRT = ${MOCKDOOR_CRT}"
 
 function pub()
 {
   mosquitto_pub \
   -L "mqtts://mqtt.portal.shackspace.de/$1" \
   -m "$2" \
-  --cafile "${SCRIPT_ROOT}/ca.crt" \
-  --key    "${SCRIPT_ROOT}/client.key" \
-  --cert   "${SCRIPT_ROOT}/client.crt" 
+  --cafile "${MOCKDOOR_CA}" \
+  --key    "${MOCKDOOR_KEY}" \
+  --cert   "${MOCKDOOR_CRT}" 
 }
 
 pub "shackspace/portal/status/door-control-${door}2" "online"
@@ -39,9 +53,9 @@ echo "mock door ${door} ready."
 mosquitto_sub \
   -F '%t\t%p' \
   -L "mqtts://mqtt.portal.shackspace.de/#" \
-  --cafile "${SCRIPT_ROOT}/ca.crt" \
-  --key    "${SCRIPT_ROOT}/client.key" \
-  --cert   "${SCRIPT_ROOT}/client.crt" \
+  --cafile "${MOCKDOOR_CA}" \
+  --key    "${MOCKDOOR_KEY}" \
+  --cert   "${MOCKDOOR_CRT}" \
   | while read -r line; do
     topic="$(echo "${line}" | cut -f 1)"
     data="$(echo "${line}" | cut -f 2)"

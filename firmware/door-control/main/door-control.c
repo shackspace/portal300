@@ -520,41 +520,60 @@ static void statemachine_signal(struct StateMachine * sm, enum PortalSignal sign
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_OPENING");
     io_beep(IO_SHORT_BEEP);
     break;
+
   case SIGNAL_LOCKING:
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_LOCKING");
     io_beep(IO_SHORT_BEEP);
     break;
+
   case SIGNAL_UNLOCKED:
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_UNLOCKED");
     io_beep(IO_SHORT_BEEP_BEEP);
     break;
+
   case SIGNAL_OPENED:
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_OPENED");
     io_beep(IO_SHORT_BEEP);
     break;
+
   case SIGNAL_NO_ENTRY:
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_NO_ENTRY");
     io_beep(IO_LONG_BEEP_BEEP_BEEP);
     break;
+
   case SIGNAL_LOCKED:
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_LOCKED");
     io_beep(IO_SHORT_BEEP_BEEP);
     break;
+
   case SIGNAL_ERROR_LOCKING:
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_ERROR_LOCKING");
     io_beep(IO_BEEP_ERROR);
     break;
+
   case SIGNAL_ERROR_OPENING:
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_ERROR_OPENING");
     io_beep(IO_BEEP_ERROR);
     break;
-  case SIGNAL_CLOSE_TIMEOUT: ESP_LOGI(TAG, "StateMachine signal: SIGNAL_CLOSE_TIMEOUT"); break;
+
+  case SIGNAL_CLOSE_TIMEOUT:
+    ESP_LOGI(TAG, "StateMachine signal: SIGNAL_CLOSE_TIMEOUT");
+    break;
+
   case SIGNAL_WAIT_FOR_DOOR_CLOSED:
     ESP_LOGI(TAG, "StateMachine signal: SIGNAL_WAIT_FOR_DOOR_CLOSED");
     io_beep(IO_SHORT_BEEP_BEEP_BEEP);
     break;
-  case SIGNAL_DOOR_MANUALLY_UNLOCKED: ESP_LOGI(TAG, "StateMachine signal: SIGNAL_DOOR_MANUALLY_UNLOCKED"); break;
-  case SIGNAL_DOOR_MANUALLY_LOCKED: ESP_LOGI(TAG, "StateMachine signal: SIGNAL_DOOR_MANUALLY_LOCKED"); break;
+
+  case SIGNAL_DOOR_MANUALLY_UNLOCKED:
+    ESP_LOGI(TAG, "StateMachine signal: SIGNAL_DOOR_MANUALLY_UNLOCKED");
+    io_beep(IO_SHORT_BEEP);
+    break;
+
+  case SIGNAL_DOOR_MANUALLY_LOCKED:
+    ESP_LOGI(TAG, "StateMachine signal: SIGNAL_DOOR_MANUALLY_LOCKED");
+    io_beep(IO_SHORT_BEEP);
+    break;
   }
 }
 

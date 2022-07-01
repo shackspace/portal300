@@ -150,6 +150,14 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
     return;
   }
 
+  if (is_door_lock_event(event, DOOR_ANY) && is_state_wait_for_open(sm_state)) {
+    // after a request to unlock via B2, door B2 was successfully opened by a user, now unlock the other door:
+    sm->state = STATE_WAIT_FOR_LOCKED;
+    SIGNAL(SIGNAL_START_TIMEOUT);  // trigger potential timeout for the locking operation
+    SIGNAL(SIGNAL_UNLOCK_TIMEOUT); // signal via ssh that nobody entered the shack and we're locking again.
+    return;
+  }
+
   if (event == EVENT_DOOR_B2_OPENED && shack_state != SHACK_OPEN && sm_state == STATE_WAIT_FOR_OPEN_VIA_B) {
     // after a request to unlock via B2, door B2 was successfully opened by a user, now unlock the other door:
     SIGNAL(SIGNAL_OPEN_DOOR_C2_UNSAFE);

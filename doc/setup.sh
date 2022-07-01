@@ -7,9 +7,9 @@ useradd portal-daemon # add daemon user
 
 mkdir /opt/portal300  # base folder for everything
 
-git clone https://github.com/shackspace/portal300
+git clone https://github.com/shackspace/portal300 /root/portal300
 
-make -C portal300 install
+make -C /root/portal300 install
 
 echo '[Unit]
 Description=Portal Daemon
@@ -25,8 +25,27 @@ Restart=always
 [Install]
 WantedBy=multi-user.target' > /etc/systemd/system/portal-daemon.service
 
+echo '[Unit]
+Description=Virtual Portal Door for shack entry %i
+After=network.target
+Wants=network.target
+
+[Service]
+User=portal-daemon
+Type=simple
+Environment="MOCKDOOR_CA=/etc/mosquitto/ca_certificates/shack-portal.crt" "MOCKDOOR_KEY=/opt/portal300/daemon.key" "MOCKDOOR_CRT=/opt/portal300/daemon.crt"
+ExecStart=/opt/portal300/mockdoor.sh %i
+Restart=always
+
+[Install]
+WantedBy=multi-user.target' > /etc/systemd/system/portal-mockdoor@.service
+
 systemctl enable portal-daemon
 systemctl start portal-daemon
+
+# Only do these as long as we don't have a door control system on door C2!
+# systemctl enable portal-mockdoor@c
+# systemctl start portal-mockdoor@c
 
 # install mosquitto
 echo '# Configuration for shackspace Portal 300

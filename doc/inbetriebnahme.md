@@ -21,4 +21,5 @@ _Samstag 2022-06-25_
 - [x] Auswirkungen der Magnet-Orientierung messen
 - [x] Modell zur Klassifikation entwickeln
 - [x] Magnetometer kalibrieren
-- [ ] Vollständiger Durchlauf
+- [x] Vollständiger Durchlauf
+- [x] `mockdoor.sh c` auf APU als service installieren

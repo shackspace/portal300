@@ -192,16 +192,23 @@ void sm_change_door_state(struct StateMachine * sm, enum DoorState new_state)
 
   case STATE_WAIT_FOR_UNLOCKED:
   {
-    if (new_state == DOOR_CLOSED) {
+    if (new_state == DOOR_CLOSED || new_state == DOOR_OPEN) {
       sm->signal(sm, SIGNAL_UNLOCKED);
       if (sm->unsafe_action) {
         // unsafe unlock: we're done here
         set_state(sm, STATE_IDLE);
       }
-      else {
+      else if (new_state == DOOR_CLOSED) {
         // wait until a user opens the door in 60 seconds.
         // will lock door again if the door won't be opened
         set_state(sm, STATE_WAIT_FOR_OPEN);
+      }
+      else {
+        // user already opened the door, we can bypass the WAIT_FOR_OPEN state
+        // and just execute what it does.
+        assert(new_state == DOOR_OPEN);
+        sm->signal(sm, SIGNAL_OPENED);
+        set_state(sm, STATE_IDLE);
       }
     }
     else {

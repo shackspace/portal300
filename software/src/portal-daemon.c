@@ -391,6 +391,10 @@ int main(int argc, char ** argv)
           break;
         }
 
+        case SIGNAL_UNLOCK_TIMEOUT:
+          log_print(LSS_SYSTEM, LL_MESSAGE, "Nobody entered the building, locking doors again...");
+          break;
+
         case SIGNAL_STATE_CHANGE:
           log_print(LSS_SYSTEM, LL_MESSAGE, "shackspace is now %s", sm_shack_state_name(sm_get_shack_state(&global_state_machine)));
           break;
