@@ -17,10 +17,6 @@ Erkenntnisse Experiment 1:
 - "Distanz-Messung" ist potentiell ungeeignet und eine Messung über Winkel ggf. besser
   - Winkeldistanz + Magnitude (Punktprodukt hilft)
 
-
-
-
-
 Neue Elektronik:
 
   Hardware-Features:
@@ -54,4 +50,26 @@ IO12 => Beeper
   IO2 - IO       - 5V
   GND -          - LINK
 
+Aufbau Experiment 2:
 
+- Grobe Struktur des finalen Aufbaus:
+  - Hall-Sensor auf Papier mit Gewicht fixiert
+  - Permanentmagnet in der Nähe abgelegt
+  - Motorschloss direkt daneben
+  - Dahinter die Hauptplatine
+- Software sampled alle 100ms Daten vom Sensor
+- Software hat ein Sliding Window von 32 Samples
+- Software berechnet Standardabweichung, Durchschnitt und Range der Samples
+
+Erkenntnisse Experiment 2:
+
+- Standardabweichung für 32 samples ist wie folgt:
+  - Standard-Abweichung bei Idle: ca 2
+  - Standard-Abweichung bei Motorfahrt: 2.5
+  - Standard-Abweichung bei Motorblockiert: 5
+  - Standard-Abweichung bei Magnet um 2mm verschieben: > 100
+  - Standard-Abweichung bei Akkuschrauber in 5cm Entferung: 50  <= X <= 300
+  - Standard-Abweichung bei Fuchteln mit Schraubenzieher: 10 <= x <= 30
+- Daraus folgt: Wenn man den Status ignoriert, wenn es eine hohe stddev gibt,
+  kann man damit relativ gut Änderungen und Störungen erkennen und filtern
+- Übliche Rausch-Größe sind +- 4uT

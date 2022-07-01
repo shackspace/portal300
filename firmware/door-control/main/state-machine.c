@@ -5,10 +5,10 @@
 #include <stdio.h>
 
 #define TIMEOUT_BUTTON_PRESS   100   // ms (Duration of a motor button press)
-#define TIMEOUT_ENGAGE_BOLT    10000 // ms (Typically twice the duration of the time needed to lock the door bolt)   TODO: Figure out the right timing
-#define TIMEOUT_DISENGAGE_BOLT 10000 // ms (Typically twice the duration of the time needed to unlock the door bolt) TODO: Figure out the right timing
+#define TIMEOUT_ENGAGE_BOLT    20000 // ms (Typically twice the duration of the time needed to lock the door bolt)   TODO: Figure out the right timing
+#define TIMEOUT_DISENGAGE_BOLT 20000 // ms (Typically twice the duration of the time needed to unlock the door bolt) TODO: Figure out the right timing
 #define TIMEOUT_USER_OPEN      60000 // ms (Timeout for waiting until the door was opened after a OPEN event)
-#define TIMEOUT_USER_CLOSE     10000 // ms (Timeout for waiting until a user closes the door after a CLOSE event)
+#define TIMEOUT_USER_CLOSE     30000 // ms (Timeout for waiting until a user closes the door after a CLOSE event)
 
 // state machine states, description see set_state function!
 enum State

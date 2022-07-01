@@ -1,6 +1,6 @@
 
 # install required packages
-apt install mosquitto jq
+apt install mosquitto mosquitto-clients jq
 
 # install portal software
 useradd portal-daemon # add daemon user

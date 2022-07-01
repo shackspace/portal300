@@ -198,7 +198,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
     return;
   }
 
-  if (event == EVENT_SSH_OPEN_FRONT_REQUEST && shack_state == SHACK_LOCKED && sm_state == STATE_IDLE) {
+  if (event == EVENT_SSH_OPEN_FRONT_REQUEST && shack_state != SHACK_OPEN && sm_state == STATE_IDLE) {
     // When shack is closed and open is requested, let the user in and begin unlocking the door.
     sm->state = STATE_WAIT_FOR_OPEN_VIA_B;
     SIGNAL(SIGNAL_START_TIMEOUT);
@@ -207,7 +207,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
     return;
   }
 
-  if (event == EVENT_SSH_OPEN_BACK_REQUEST && shack_state == SHACK_LOCKED && sm_state == STATE_IDLE) {
+  if (event == EVENT_SSH_OPEN_BACK_REQUEST && shack_state != SHACK_OPEN && sm_state == STATE_IDLE) {
     // When shack is closed and open is requested, let the user in and begin unlocking the door.
     sm->state = STATE_WAIT_FOR_OPEN_VIA_C;
     SIGNAL(SIGNAL_START_TIMEOUT);

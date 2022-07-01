@@ -930,7 +930,8 @@ static void mqtt_handle_message(void * user_data, char const * topic, char const
   else if (streq(topic, PORTAL300_TOPIC_ACTION_LOCK_DOOR)) {
     // Silently ignore message
   }
-  else {
+  else if (strstr(topic, PORTAL300_TOPIC_PREFIX) == topic) {
+    // we only need to manage topics for portal300
     log_print(LSS_SYSTEM, LL_WARNING, "Received data for unhandled topic '%s': %s", topic, data);
   }
 }
