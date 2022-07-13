@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include "ipc.h"
 #include "log.h"
@@ -196,6 +197,32 @@ static void panic(char const * msg)
   exit(EXIT_FAILURE);
 }
 
+static bool parse_action(char const * action_str, enum PortalAction * action)
+{
+  assert(action_str != NULL);
+  assert(action != NULL);
+
+  if (strcmp(action_str, "open-front") == 0) {
+    *action = PA_OPEN_FRONT;
+  }
+  else if (strcmp(action_str, "open-back") == 0) {
+    *action = PA_OPEN_BACK;
+  }
+  else if (strcmp(action_str, "close") == 0) {
+    *action = PA_CLOSE;
+  }
+  else if (strcmp(action_str, "shutdown") == 0) {
+    *action = PA_SHUTDOWN;
+  }
+  else if (strcmp(action_str, "status") == 0) {
+    *action = PA_STATUS;
+  }
+  else {
+    return false;
+  }
+  return true;
+}
+
 static bool parse_cli(int argc, char ** argv, struct PortalArgs * args)
 {
   *args = (struct PortalArgs){
@@ -253,31 +280,36 @@ static bool parse_cli(int argc, char ** argv, struct PortalArgs * args)
     }
   }
 
-  if (optind >= argc) {
+  // Allow SSH_ORIGINAL_COMMAND to be used to open the portal as well.
+  char const * ssh_original_command = getenv("SSH_ORIGINAL_COMMAND");
+  if (ssh_original_command == NULL) {
+    ssh_original_command = ""; // sane default
+  }
+
+  // verify that if we have a ssh action, it must be a valid one.
+  bool ssh_action_ok = parse_action(ssh_original_command, &args->action);
+
+  if (!ssh_action_ok && strcmp(ssh_original_command, "") != 0) {
     print_usage(stderr);
     return false;
   }
 
-  const char * const action_str = argv[optind];
-
-  if (strcmp(action_str, "open-front") == 0) {
-    args->action = PA_OPEN_FRONT;
-  }
-  else if (strcmp(action_str, "open-back") == 0) {
-    args->action = PA_OPEN_BACK;
-  }
-  else if (strcmp(action_str, "close") == 0) {
-    args->action = PA_CLOSE;
-  }
-  else if (strcmp(action_str, "shutdown") == 0) {
-    args->action = PA_SHUTDOWN;
-  }
-  else if (strcmp(action_str, "status") == 0) {
-    args->action = PA_STATUS;
-  }
-  else {
-    fprintf(stderr, "Invalid action: %s\n", action_str);
+  if (!ssh_action_ok && optind >= argc) {
+    // If we don't have a ssh action, we require a action passed
+    // on the command line.
+    print_usage(stderr);
     return false;
+  }
+
+  if (!ssh_action_ok) {
+    // not having an OK ssh action here means we got no action via SSH,
+    // as invalid options are filtered out earlier alreaedy.
+
+    const char * const action_str = argv[optind];
+    if (!parse_action(action_str, &args->action)) {
+      fprintf(stderr, "Invalid action: %s\n", action_str);
+      return false;
+    }
   }
 
   bool params_ok = true;
