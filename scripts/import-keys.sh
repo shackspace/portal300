@@ -6,6 +6,7 @@ set -e
 
 DEVICE="$1"
 CA_CERT="$2"
+SOURCE_FILE="$3"
 ACTIONS="close open-front open-back status"
 
 if [ -z "${DEVICE}" ]; then
@@ -25,39 +26,44 @@ openssl x509 \
   -in "${CA_CERT}" \
 > /tmp/shack-portal.pub
 
-echo "Pulling files from usb stick"
+if [ -z "${SOURCE_FILE}" ]; then
 
-mount "${DEVICE}" /mnt
+  echo "Pulling files from usb stick"
 
-if [ ! -f "/mnt/keymembers.json" ]; then
-  echo "Missing keymembers.json!"
+  mount "${DEVICE}" /mnt
+
+  if [ ! -f "/mnt/keymembers.json" ]; then
+    echo "Missing keymembers.json!"
+    umount /mnt
+  fi
+
+  if [ ! -f "/mnt/keymembers.json.sig" ]; then
+    echo "Missing keymembers.json.sig!"
+    umount /mnt
+  fi
+
+  cp /mnt/keymembers.json /tmp/keymembers.json
+  cp /mnt/keymembers.json.sig /tmp/keymembers.json.sig
+
   umount /mnt
+
+  echo "Retrieved files, validating..."
+
+  if openssl dgst \
+    -sha256 \
+    -verify /tmp/shack-portal.pub \
+    -signature /tmp/keymembers.json.sig \
+    /tmp/keymembers.json; then
+    echo "Files are correct, we can now generate authorized_keys files..."
+  else
+    echo "Signature verification failed"
+    exit 1
+  fi
+
+  rm /tmp/shack-portal.pub /tmp/keymembers.json.sig
+else 
+  cp "${SOURCE_FILE}" /tmp/keymembers.json
 fi
-
-if [ ! -f "/mnt/keymembers.json.sig" ]; then
-  echo "Missing keymembers.json.sig!"
-  umount /mnt
-fi
-
-cp /mnt/keymembers.json /tmp/keymembers.json
-cp /mnt/keymembers.json.sig /tmp/keymembers.json.sig
-
-umount /mnt
-
-echo "Retrieved files, validating..."
-
-if openssl dgst \
-  -sha256 \
-  -verify /tmp/shack-portal.pub \
-  -signature /tmp/keymembers.json.sig \
-  /tmp/keymembers.json; then
-  echo "Files are correct, we can now generate authorized_keys files..."
-else
-  echo "Signature verification failed"
-  exit 1
-fi
-
-rm /tmp/shack-portal.pub /tmp/keymembers.json.sig
 
 for action in ${ACTIONS}; do
   echo "rendering file for ${action}..."

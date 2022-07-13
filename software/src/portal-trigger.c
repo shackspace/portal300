@@ -288,7 +288,6 @@ static bool parse_cli(int argc, char ** argv, struct PortalArgs * args)
 
   // verify that if we have a ssh action, it must be a valid one.
   bool ssh_action_ok = parse_action(ssh_original_command, &args->action);
-
   if (!ssh_action_ok && strcmp(ssh_original_command, "") != 0) {
     print_usage(stderr);
     return false;
