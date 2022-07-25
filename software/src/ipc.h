@@ -12,11 +12,12 @@
 enum IcpMessageType
 {
   // client to daemon
-  IPC_MSG_OPEN_FRONT   = 101,
-  IPC_MSG_OPEN_BACK    = 102,
-  IPC_MSG_CLOSE        = 103,
-  IPC_MSG_SHUTDOWN     = 104,
-  IPC_MSG_QUERY_STATUS = 105,
+  IPC_MSG_OPEN_FRONT    = 101,
+  IPC_MSG_OPEN_BACK     = 102,
+  IPC_MSG_CLOSE         = 103,
+  IPC_MSG_SHUTDOWN      = 104,
+  IPC_MSG_QUERY_STATUS  = 105,
+  IPC_MSG_SIMPLE_STATUS = 106,
 
   // daemon to client
   IPC_MSG_INFO = 201,

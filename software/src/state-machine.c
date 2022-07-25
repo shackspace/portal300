@@ -193,6 +193,8 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
     sm->state = STATE_IDLE;
     SIGNAL(SIGNAL_CANCEL_TIMEOUT);
     SIGNAL(SIGNAL_LOCK_SUCCESSFUL);
+
+    SIGNAL(SIGNAL_OPEN_DOOR_B); // open front door so users can leave the shack conveniently
     return;
   }
 

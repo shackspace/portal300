@@ -673,6 +673,17 @@ int main(int argc, char ** argv)
                 break;
               }
 
+              case IPC_MSG_SIMPLE_STATUS:
+              {
+                log_print(LSS_IPC, LL_MESSAGE, "client %zu requested simple portal status.", pfd_index);
+
+                (void)send_ipc_infof(pfd.fd, "%s\n", sm_shack_state_name(sm_get_shack_state(&global_state_machine)));
+
+                // after a status message, we can just drop the client connection
+                remove_ipc_client(pfd_index);
+                break;
+              }
+
               default:
               {
                 // Invalid message received. Print error message and kick the client

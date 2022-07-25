@@ -17,11 +17,12 @@ static void panic(char const * msg);
 
 enum PortalAction
 {
-  PA_OPEN_FRONT = 1,
-  PA_OPEN_BACK  = 2,
-  PA_CLOSE      = 3,
-  PA_SHUTDOWN   = 4,
-  PA_STATUS     = 5,
+  PA_OPEN_FRONT    = 1,
+  PA_OPEN_BACK     = 2,
+  PA_CLOSE         = 3,
+  PA_SHUTDOWN      = 4,
+  PA_STATUS        = 5,
+  PA_SIMPLE_STATUS = 6,
 };
 
 struct PortalArgs
@@ -108,6 +109,16 @@ int main(int argc, char ** argv)
   {
     bool const ok = ipc_send_msg(ipc_socket, (struct IpcMessage){
                                                  .type = IPC_MSG_QUERY_STATUS,
+                                             });
+    if (!ok) {
+      return EXIT_FAILURE;
+    }
+    break;
+  }
+  case PA_SIMPLE_STATUS:
+  {
+    bool const ok = ipc_send_msg(ipc_socket, (struct IpcMessage){
+                                                 .type = IPC_MSG_SIMPLE_STATUS,
                                              });
     if (!ok) {
       return EXIT_FAILURE;
@@ -216,6 +227,9 @@ static bool parse_action(char const * action_str, enum PortalAction * action)
   }
   else if (strcmp(action_str, "status") == 0) {
     *action = PA_STATUS;
+  }
+  else if (strcmp(action_str, "simple-status") == 0) {
+    *action = PA_SIMPLE_STATUS;
   }
   else {
     return false;
