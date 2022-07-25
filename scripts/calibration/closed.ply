@@ -1,6 +1,6 @@
 ply
 format ascii 1.0
-element vertex 324
+element vertex 325
 property float x
 property float y
 property float z
@@ -712,3 +712,4 @@ end_header
 18.020000 -15.020000 12.700000 0 255 0
 21.030000 -15.020000 13.920000 0 255 0
 21.030000 -15.020000 12.700000 0 255 0
+21.690000 -20.46     14.24     0 255 0

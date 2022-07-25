@@ -133,7 +133,9 @@ static const struct SensorClassification well_known_vectors[] = {
     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = 0.000000}, .radius2 = 409.496213},
     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = -10.016829}, .radius2 = 555.778533},
     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = -20.539557}, .radius2 = 733.463518},
-    (struct SensorClassification){.door_state = DOOR_CLOSED, .location = {.x = 20.851877, .y = -13.566074, .z = 10.409240}, .radius2 = 34.790504},
+
+    (struct SensorClassification){.door_state = DOOR_CLOSED, .location = {.x = 20.851877, .y = -13.566074, .z = 10.409240}, .radius2 = 65.790504},
+
     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -17.264450, .y = -0.243910, .z = -37.188171}, .radius2 = 332.412282},
     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -27.281277, .y = 3.499753, .z = -44.958797}, .radius2 = 525.025754},
     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -35.578041, .y = 7.648136, .z = -53.215088}, .radius2 = 731.612207},
@@ -250,12 +252,12 @@ static enum DoorState get_door_state(bool * value_sane)
 
   struct Vector3 sensor_data;
   if (mlx90393_readData(&mlx, &sensor_data.x, &sensor_data.y, &sensor_data.z)) {
+    char buffer[256];
 
 #ifdef DEBUG_BUILD
     enum DoorState raw_state = classify_sensor_data(&sensor_data);
 
     // Send sensor data data over MQTT
-    char buffer[256];
     snprintf(buffer, sizeof buffer, "%4.2f\t%4.2f\t%4.2f\t%s", sensor_data.x, sensor_data.y, sensor_data.z, door_state_to_string(raw_state));
     mqtt_pub("debug/sensor/magnetometer/raw", buffer);
 
@@ -291,6 +293,15 @@ static enum DoorState get_door_state(bool * value_sane)
 #ifdef DEBUG_BUILD
     snprintf(buffer, sizeof buffer, "stable: %d\tnoise: %d\tok: %d\tclassification: %s", door_state_stable, noise_level_ok, *value_sane, door_state_to_string(result_state));
     mqtt_pub("debug/sensor/magnetometer/final", buffer);
+#else
+    // Even for non-debug builds, we want to receive fault state sensor data
+    if (result_state == DOOR_FAULT && *value_sane) {
+      snprintf(buffer, sizeof buffer, "stddev: %4.2f\tclassification: %s\tok: %d\tsmoothed: %4.2f\t%4.2f\t%4.2f", stats.stddev, door_state_to_string(fresh_state), noise_level_ok, stats.avg.x, stats.avg.y, stats.avg.z);
+      mqtt_pub("debug/sensor/magnetometer/classification", buffer);
+
+      snprintf(buffer, sizeof buffer, "stable: %d\tnoise: %d\tok: %d\tclassification: %s", door_state_stable, noise_level_ok, *value_sane, door_state_to_string(result_state));
+      mqtt_pub("debug/sensor/magnetometer/final", buffer);
+    }
 #endif
 
     return result_state;
