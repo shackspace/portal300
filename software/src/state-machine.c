@@ -237,6 +237,17 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
   }
 
   if (is_open_request(event) && shack_state == SHACK_OPEN && sm_state == STATE_IDLE) {
+
+    if (event == EVENT_SSH_OPEN_FRONT_REQUEST) {
+      // if opening of front door is requested
+      SIGNAL(SIGNAL_OPEN_DOOR_B);
+    }
+
+    if (event == EVENT_SSH_OPEN_BACK_REQUEST) {
+      // if opening of front door is requested
+      SIGNAL(SIGNAL_OPEN_DOOR_C);
+    }
+
     // Transfer key ownership when the shack was successfully unlocked when no process is in action.
     SIGNAL(SIGNAL_CHANGE_KEYHOLDER);
     return;
@@ -258,6 +269,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
 
   if (event == EVENT_SSH_CLOSE_REQUEST && shack_state == SHACK_LOCKED) {
     SIGNAL(SIGNAL_NO_STATE_CHANGE);
+    SIGNAL(SIGNAL_OPEN_DOOR_B); // Opening door for people who are late
     return;
   }
 

@@ -1,0 +1,39 @@
+==== Technische Dokumentation ====
+
+=== Architektur ===
+
+Das Portalsystem der Ulmer Straße 300 besteht aus mehreren Komponenten, die über MQTT
+miteinander kommunizieren:
+
+  * Türe B:  Die Eingangstüre auf der rechten Seite vorn am Gebäude.
+  * Türe B2: Die innere shackspace-Türes auf der vorderen Seite des Gebäudes.
+  * Türe C2: Die innere shackspace-Türes auf der hinteren Seite des Gebäudes.
+  * APU: Ein kleiner, sparsamer PC, die zentrale Steuereinheit des Portals.
+  * DCL B, C: //Door Control// B bzw. C. Ein ESP32-System, welches die Türmotoren steuert und die Sensorik ausliest.
+  * RMT: //Remote Trigger//, ein ESP32-System, welches mit der Busch-Jaeger-Schließanlage kommuniziert.
+
+  [ Türe B ] <--> [ RMT ]
+                     ^
+                     |
+                     v
+   [ DCL B ] <--> [ APU ] <--> [ DCL C ]
+       ^             ^              ^
+       |             |              |
+       v             v              v
+  [ Türe B2 ]    [ WLAN ]       [ Türe C2 ]
+
+Die Geräte DCL B, DCL C, APU und RMT reden miteinander über einen MQTT-Broker (''mosquitto''), welcher auf der APU gehostet wird.
+
+Auf der APU läuft ein Service, welcher die übergreifende Ablaufsteuerung zwischen den einzelnen Komponenten 
+
+=== Security ===
+
+Die Geräte authentifizieren sich über Client-Zertifikate auf dem Broker, um ein externes Mitlesen/Modifizieren der MQTT-Nachrichten zu verhindern.
+
+Die ESPs haben jeweils ein eigenes Client-Zertifikat eincompiliert, welches von einer systeminternen CA signiert worden sind. Ohne diese signierten Zertifikate kann sich kein System auf den MQTT-Broker verbinden.
+
+=== Hardware ===
+
+==== DCL B, DCL C ====
+
+Die beiden //Door Control//-Systeme sind ESP32-Systeme, welche mit einem Optokoppler ein Equiva Lock steuern und dessen Knöpfe betätigt. Zudem wird ein 
