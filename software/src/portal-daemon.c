@@ -1174,7 +1174,7 @@ static bool parse_cli(int argc, char ** argv, struct CliOptions * args)
 
   {
     int opt;
-    while ((opt = getopt(argc, argv, "hH:p:k:c:C:")) != -1) {
+    while ((opt = getopt(argc, argv, "hH:p:k:c:C:v")) != -1) {
       switch (opt) {
 
       case 'h':
@@ -1231,6 +1231,12 @@ static bool parse_cli(int argc, char ** argv, struct CliOptions * args)
         if (args->ca_cert_file == NULL) {
           panic("out of memory");
         }
+        break;
+      }
+
+      case 'v':
+      { // verbose
+        log_set_level(LSS_IPC, LL_VERBOSE);
         break;
       }
 

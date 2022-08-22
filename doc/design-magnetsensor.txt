@@ -33,7 +33,7 @@ IO12 => Beeper
  IO4 => Motor Open  
  IO2 => Motor Close (is a boot strapping pin, defaults to LOW)
 
- DTR RX TX VCC CTS GNDp
+ DTR RX TX VCC CTS GND
 
 
   TXD - ??       - EN
