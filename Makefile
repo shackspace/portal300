@@ -11,4 +11,7 @@ install:
 	install -T scripts/99-usb-autoimport.rules /etc/udev/rules.d/99-usb-autoimport.rules -m 555
 	udevadm control --reload
 
+deploy-admin:
+	scp -r scripts/admin/* byro:/home/shackbureau/portal300/
+
 .phony: install

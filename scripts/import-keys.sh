@@ -35,11 +35,13 @@ if [ -z "${SOURCE_FILE}" ]; then
   if [ ! -f "/mnt/keymembers.json" ]; then
     echo "Missing keymembers.json!"
     umount /mnt
+    exit 1
   fi
 
   if [ ! -f "/mnt/keymembers.json.sig" ]; then
     echo "Missing keymembers.json.sig!"
     umount /mnt
+    exit 1
   fi
 
   cp /mnt/keymembers.json /tmp/keymembers.json

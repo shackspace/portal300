@@ -1,0 +1,11 @@
+This folder contains Portal300 administrative setup.
+
+The file structure should look like this:
+scripts/admin/
+├── README        # this file
+├── ca
+│   └── ...
+├── data
+│   └── ...       # auxiliary data required by the scripts
+├── initialize.sh # initializes the certificate authority 
+└── key-export.sh # exports keys from byro into a target folder
