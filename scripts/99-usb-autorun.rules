@@ -1,1 +1,0 @@
-ACTION=="add", SUBSYSTEM=="block", ATTRS{removable}=="1", ATTR{partition}=="1", RUN+="/tmp/funky.sh"
