@@ -1,0 +1,2 @@
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="portal-status", MODE="0666"

@@ -24,6 +24,8 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+#include <termios.h>
+#include <sys/ioctl.h>
 
 #include <mqtt.h>
 
@@ -41,6 +43,7 @@ struct CliOptions
   char const * ca_cert_file;
   char const * client_key_file;
   char const * client_crt_file;
+  char const * serial_device_name;
 };
 
 struct DeviceStatus
@@ -155,6 +158,10 @@ static struct LogConsumer ipc_client_logger = {
 
 static void close_sm_timerfd(void);
 
+static void update_api_status(void);
+
+struct CliOptions cli;
+
 int main(int argc, char ** argv)
 {
   // Initialize libraries and dependencies:
@@ -189,7 +196,6 @@ int main(int argc, char ** argv)
     return EXIT_FAILURE;
   }
 
-  struct CliOptions cli;
   if (!parse_cli(argc, argv, &cli)) {
     return EXIT_FAILURE;
   }
@@ -424,6 +430,8 @@ int main(int argc, char ** argv)
 
     // sync the mqtt client to send some leftovers
     mqtt_client_sync(mqtt_client);
+
+    update_api_status();
 
     int const poll_ret = poll(pollfds, pollfds_size, -1); // wait infinitly for an event
     if (poll_ret == -1) {
@@ -1164,17 +1172,18 @@ static bool fetch_timer_fd(int fd)
 static bool parse_cli(int argc, char ** argv, struct CliOptions * args)
 {
   *args = (struct CliOptions){
-      .help            = false,
-      .host_name       = "mqtt.portal.shackspace.de",
-      .port            = 8883,
-      .ca_cert_file    = NULL,
-      .client_key_file = NULL,
-      .client_crt_file = NULL,
+      .help               = false,
+      .host_name          = "mqtt.portal.shackspace.de",
+      .port               = 8883,
+      .ca_cert_file       = NULL,
+      .client_key_file    = NULL,
+      .client_crt_file    = NULL,
+      .serial_device_name = "/dev/portal-status",
   };
 
   {
     int opt;
-    while ((opt = getopt(argc, argv, "hH:p:k:c:C:v")) != -1) {
+    while ((opt = getopt(argc, argv, "hH:p:k:c:C:vP:")) != -1) {
       switch (opt) {
 
       case 'h':
@@ -1229,6 +1238,15 @@ static bool parse_cli(int argc, char ** argv, struct CliOptions * args)
       { // ca certificate file
         args->ca_cert_file = strdup(optarg);
         if (args->ca_cert_file == NULL) {
+          panic("out of memory");
+        }
+        break;
+      }
+
+      case 'P':
+      {
+        args->serial_device_name = strdup(optarg);
+        if (args->serial_device_name == NULL) {
           panic("out of memory");
         }
         break;
@@ -1353,4 +1371,35 @@ static void close_sm_timerfd(void)
     log_perror(LSS_SYSTEM, LL_ERROR, "failed to destroy state machine timerfd");
   }
   sm_timerfd = -1;
+}
+
+static void update_api_status(void)
+{
+  if (cli.serial_device_name == NULL) {
+    return;
+  }
+
+  int const device = open(cli.serial_device_name, O_RDWR);
+  if (device == -1) {
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to open serial status device");
+    return;
+  }
+
+  bool const is_open = (sm_get_shack_state(&global_state_machine) == SHACK_OPEN);
+
+  int const flags = TIOCM_RTS;
+  if (is_open) {
+    if (ioctl(device, TIOCMBIC, &flags) == -1) { // clear modem bits
+      log_perror(LSS_SYSTEM, LL_ERROR, "failed to notify serial status device: OPEN");
+    }
+  }
+  else {
+    if (ioctl(device, TIOCMBIS, &flags) == -1) { // set modem bits
+      log_perror(LSS_SYSTEM, LL_ERROR, "failed to notify serial status device: CLOSE");
+    }
+  }
+
+  if (close(device) == -1) {
+    log_perror(LSS_SYSTEM, LL_ERROR, "failed to close serial status device");
+  }
 }
