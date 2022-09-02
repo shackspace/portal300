@@ -8,11 +8,12 @@
 #define SHACK_WLAN_PASSWORD           "welcome2shack"
 #define SHACK_MAXIMUM_RECONNECT_RETRY 5
 
-// Hardware Configuration:
-#define PORTAL_OPEN_STATE_PIN 0 // we use the RTS signal to not only pass "boot" request, but also pass the information of being open
-
 // API Configuration:
 #define PORTAL_API_UPDATE_PERIOD (2 * 60) // seconds
 #define PORTAL_API_ENDPOINT      "https://api2.shackspace.de/v1/space/notify-open?auth_token=" PORTAL_API_TOKEN
+
+// byte message definitions:
+#define PORTAL_SIGNAL_OPEN   0x12 // DC2, C-R
+#define PORTAL_SIGNAL_CLOSED 0x14 // DC4, C-T
 
 #endif
