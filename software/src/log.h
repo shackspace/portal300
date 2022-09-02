@@ -19,6 +19,7 @@ enum LogSubSystem
   LSS_GPIO,
   LSS_SYSTEM,
   LSS_IPC,
+  LSS_API,
 };
 
 struct LogConsumer

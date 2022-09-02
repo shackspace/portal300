@@ -1373,6 +1373,47 @@ static void close_sm_timerfd(void)
   sm_timerfd = -1;
 }
 
+// inspired by https://stackoverflow.com/a/6947758
+static bool configure_serial_port(int fd, int baud_rate)
+{
+  struct termios tty;
+  if (tcgetattr(fd, &tty) != 0) {
+    log_perror(LSS_API, LL_ERROR, "failed to get serial port configuration");
+    return false;
+  }
+
+  cfsetospeed(&tty, baud_rate);
+  cfsetispeed(&tty, baud_rate);
+
+  tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8; // 8-bit chars
+  // disable IGNBRK for mismatched speed tests; otherwise receive break
+  // as \000 chars
+  tty.c_iflag &= ~IGNBRK; // disable break processing
+  tty.c_lflag = 0;        // no signaling chars, no echo,
+                          // no canonical processing
+  tty.c_oflag     = 0;    // no remapping, no delays
+  tty.c_cc[VMIN]  = 0;    // read doesn't block
+  tty.c_cc[VTIME] = 5;    // 0.5 seconds read timeout
+
+  tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
+
+  tty.c_cflag |= (CLOCAL | CREAD);   // ignore modem controls,
+                                     // enable reading
+  tty.c_cflag &= ~(PARENB | PARODD); // shut off parity
+  // tty.c_cflag |= parity;
+  tty.c_cflag &= ~CSTOPB;
+  tty.c_cflag &= ~CRTSCTS;
+
+  if (tcsetattr(fd, TCSANOW, &tty) != 0) {
+    log_perror(LSS_API, LL_ERROR, "failed to set serial port configuration");
+    return false;
+  }
+  return true;
+}
+
+#define PORTAL_SIGNAL_OPEN   0x12 // DC2
+#define PORTAL_SIGNAL_CLOSED 0x14 // DC4
+
 static void update_api_status(void)
 {
   if (cli.serial_device_name == NULL) {
@@ -1381,25 +1422,24 @@ static void update_api_status(void)
 
   int const device = open(cli.serial_device_name, O_RDWR);
   if (device == -1) {
-    log_perror(LSS_SYSTEM, LL_ERROR, "failed to open serial status device");
+    log_perror(LSS_API, LL_ERROR, "failed to open serial status device");
+    return;
+  }
+
+  if (!configure_serial_port(device, B115200)) {
+    // already logged the error inside the func
     return;
   }
 
   bool const is_open = (sm_get_shack_state(&global_state_machine) == SHACK_OPEN);
 
-  int const flags = TIOCM_RTS;
-  if (is_open) {
-    if (ioctl(device, TIOCMBIC, &flags) == -1) { // clear modem bits
-      log_perror(LSS_SYSTEM, LL_ERROR, "failed to notify serial status device: OPEN");
-    }
-  }
-  else {
-    if (ioctl(device, TIOCMBIS, &flags) == -1) { // set modem bits
-      log_perror(LSS_SYSTEM, LL_ERROR, "failed to notify serial status device: CLOSE");
-    }
+  uint8_t const msg = is_open ? PORTAL_SIGNAL_OPEN : PORTAL_SIGNAL_CLOSED;
+
+  if (write(device, &msg, 1) != 1) {
+    log_perror(LSS_API, LL_ERROR, "failed to write status");
   }
 
   if (close(device) == -1) {
-    log_perror(LSS_SYSTEM, LL_ERROR, "failed to close serial status device");
+    log_perror(LSS_API, LL_ERROR, "failed to close serial status device");
   }
 }

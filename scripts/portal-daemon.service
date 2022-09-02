@@ -1,0 +1,13 @@
+[Unit]
+Description=Portal Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+User=portal-daemon
+Type=simple
+ExecStart=/opt/portal300/portal-daemon -C /etc/mosquitto/ca_certificates/shack-portal.crt -c /opt/portal300/daemon.crt -k /opt/portal300/daemon.key
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

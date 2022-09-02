@@ -1,0 +1,15 @@
+[Unit]
+Description=Virtual Portal Door for shack entry %i
+After=network.target
+Wants=network.target
+
+[Service]
+User=portal-daemon
+Type=simple
+Environment="MOCKDOOR_CA=/etc/mosquitto/ca_certificates/shack-portal.crt" "MOCKDOOR_KEY=/opt/portal300/daemon.key" "MOCKDOOR_CRT=/opt/portal300/daemon.crt"
+ExecStart=/opt/portal300/mockdoor.sh %i
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+

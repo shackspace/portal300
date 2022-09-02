@@ -17,6 +17,7 @@ static enum LogLevel subsystem_max_level[] = {
     [LSS_GPIO]    = LL_VERBOSE,
     [LSS_SYSTEM]  = LL_VERBOSE,
     [LSS_IPC]     = LL_VERBOSE,
+    [LSS_API]     = LL_VERBOSE,
 };
 
 static void log_write_stderr(void * user_data, enum LogSubSystem subsystem, enum LogLevel level, char const * msg);
@@ -144,6 +145,8 @@ char const * log_get_subsystem_name(enum LogSubSystem subsystem)
     return "system";
   if (subsystem == LSS_IPC)
     return "ipc";
+  if (subsystem == LSS_API)
+    return "api";
   return "<<INVALID>>";
 }
 
