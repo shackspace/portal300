@@ -25,13 +25,16 @@ Neue Elektronik:
   - Motorsteuerung aktivieren (Open, Close, GND)
   - Sensor-Link (I²C) (GND, SDA, SCL, 3V3)
 
- 
 
-IO32 => SCL
-IO33 => SDA
+
+IO32 => I²C SCL
+IO33 => I²C SDA
+IO15 => Door Closed
+IO14 => Door Locked
 IO12 => Beeper
  IO4 => Motor Open  
  IO2 => Motor Close (is a boot strapping pin, defaults to LOW)
+
 
  DTR RX TX VCC CTS GND
 

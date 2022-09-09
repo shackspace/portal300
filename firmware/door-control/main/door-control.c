@@ -23,9 +23,9 @@
 #define CURRENT_DOOR                DOOR_B2
 #define CURRENT_DEVICE              DOOR_CONTROL_B2
 #define BUTTON_DEBOUNCE_TIME        1000 // ms, can be pretty high for less button mashing
-#define FORCED_STATUS_UPDATE_PERIOD 100  // number of loops, roughly every ten seconds
+#define FORCED_STATUS_UPDATE_PERIOD 10   // number of loops, roughly every ten seconds
 
-// #define DEBUG_BUILD
+#define DEBUG_BUILD
 
 /////////////////////////////////////////////////////////////////////
 
@@ -102,14 +102,14 @@ static char const * door_state_to_string(enum DoorState door_state)
   return "unknown";
 }
 
-static float euclidean_distance2(struct Vector3 const * a, struct Vector3 const * b)
-{
-  float dx = a->x - b->x;
-  float dy = a->y - b->y;
-  float dz = a->z - b->z;
+// static float euclidean_distance2(struct Vector3 const * a, struct Vector3 const * b)
+// {
+//   float dx = a->x - b->x;
+//   float dy = a->y - b->y;
+//   float dz = a->z - b->z;
 
-  return dx * dx + dy * dy + dz * dz;
-}
+//   return dx * dx + dy * dy + dz * dz;
+// }
 
 //! Acceptable standard derivation of the sensor data.
 //! If data has too much noise in it, we assume the magnetic field is
@@ -122,28 +122,28 @@ static float euclidean_distance2(struct Vector3 const * a, struct Vector3 const 
 //! - In a changing environment, the stddev is typically way larger than 10.
 static const float acceptable_stddev = 10.0;
 
-static const struct SensorClassification well_known_vectors[] = {
-    // generated data:
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = 6.171983, .y = -22.461975, .z = 6.576705}, .radius2 = 10.483105},
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = 0.505900, .y = -22.259615, .z = 8.296766}, .radius2 = 20.121052},
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -4.249563, .y = -23.069056, .z = 10.927447}, .radius2 = 29.852276},
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -9.713285, .y = -24.991476, .z = 12.445148}, .radius2 = 55.054486},
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -14.569928, .y = -27.015078, .z = 11.838068}, .radius2 = 98.320034},
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -19.325390, .y = -29.342220, .z = 7.568555}, .radius2 = 187.681367},
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = 0.000000}, .radius2 = 409.496213},
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = -10.016829}, .radius2 = 555.778533},
-    (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = -20.539557}, .radius2 = 733.463518},
+// static const struct SensorClassification well_known_vectors[] = {
+//     // generated data:
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = 6.171983, .y = -22.461975, .z = 6.576705}, .radius2 = 10.483105},
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = 0.505900, .y = -22.259615, .z = 8.296766}, .radius2 = 20.121052},
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -4.249563, .y = -23.069056, .z = 10.927447}, .radius2 = 29.852276},
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -9.713285, .y = -24.991476, .z = 12.445148}, .radius2 = 55.054486},
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -14.569928, .y = -27.015078, .z = 11.838068}, .radius2 = 98.320034},
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -19.325390, .y = -29.342220, .z = 7.568555}, .radius2 = 187.681367},
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = 0.000000}, .radius2 = 409.496213},
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = -10.016829}, .radius2 = 555.778533},
+//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = -20.539557}, .radius2 = 733.463518},
 
-    (struct SensorClassification){.door_state = DOOR_CLOSED, .location = {.x = 20.851877, .y = -13.566074, .z = 10.409240}, .radius2 = 65.790504},
+//     (struct SensorClassification){.door_state = DOOR_CLOSED, .location = {.x = 20.851877, .y = -13.566074, .z = 10.409240}, .radius2 = 65.790504},
 
-    (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -17.264450, .y = -0.243910, .z = -37.188171}, .radius2 = 332.412282},
-    (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -27.281277, .y = 3.499753, .z = -44.958797}, .radius2 = 525.025754},
-    (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -35.578041, .y = 7.648136, .z = -53.215088}, .radius2 = 731.612207},
-    (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -43.975986, .y = 10.582358, .z = -61.570679}, .radius2 = 1002.024397},
-    (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -23.153131, .y = 2.164176, .z = -40.830650}, .radius2 = 424.629290},
-    (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -32.502167, .y = 6.049490, .z = -49.329777}, .radius2 = 638.108918},
-    (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -40.394211, .y = 9.206306, .z = -57.586067}, .radius2 = 875.646447},
-};
+//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -17.264450, .y = -0.243910, .z = -37.188171}, .radius2 = 332.412282},
+//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -27.281277, .y = 3.499753, .z = -44.958797}, .radius2 = 525.025754},
+//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -35.578041, .y = 7.648136, .z = -53.215088}, .radius2 = 731.612207},
+//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -43.975986, .y = 10.582358, .z = -61.570679}, .radius2 = 1002.024397},
+//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -23.153131, .y = 2.164176, .z = -40.830650}, .radius2 = 424.629290},
+//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -32.502167, .y = 6.049490, .z = -49.329777}, .radius2 = 638.108918},
+//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -40.394211, .y = 9.206306, .z = -57.586067}, .radius2 = 875.646447},
+// };
 
 #define NUM_SAMPLES 32
 
@@ -199,25 +199,39 @@ static enum DoorState classify_sensor_data(struct Vector3 const * vec)
 {
   assert(vec != NULL);
 
-  size_t len = sizeof(well_known_vectors) / sizeof(well_known_vectors[0]);
+  // size_t len = sizeof(well_known_vectors) / sizeof(well_known_vectors[0]);
 
-  float min_dist = INFINITY;
+  // float min_dist = INFINITY;
 
-  enum DoorState classification = DOOR_FAULT; // this is the default assumption
+  // enum DoorState classification = DOOR_OPEN; // this is the default assumption
 
-  for (size_t i = 0; i < len; i++) {
-    struct SensorClassification class = well_known_vectors[i];
-    float dist2                       = euclidean_distance2(&class.location, vec);
-
-    // printf("%zu => %.2f\n", i, dist);
-
-    if (dist2 <= class.radius2 && dist2 < min_dist) {
-      min_dist       = dist2;
-      classification = class.door_state;
+  if (io_get_door_closed()) {
+    // single locked: debug/sensor/magnetometer/raw -24.03	21.03	-57.48
+    // double locked: debug/sensor/magnetometer/raw -54.07	30.04	-90.75
+    if (vec->x < -30 && vec->y > 20 && vec->z < -60) {
+      return DOOR_LOCKED;
+    }
+    else {
+      return DOOR_CLOSED;
     }
   }
+  else {
+    return DOOR_OPEN;
+  }
 
-  return classification;
+  // for (size_t i = 0; i < len; i++) {
+  //   struct SensorClassification class = well_known_vectors[i];
+  //   float dist2                       = euclidean_distance2(&class.location, vec);
+
+  //   // printf("%zu => %.2f\n", i, dist);
+
+  //   if (dist2 <= class.radius2 && dist2 < min_dist) {
+  //     min_dist       = dist2;
+  //     classification = class.door_state;
+  //   }
+  // }
+
+  // return classification;
 }
 
 #define SMOOTH_DOOR_STATE_SIZE 8
@@ -337,7 +351,16 @@ static void publish_door_status(enum DoorState state)
   case DOOR_CLOSED: state_msg = PORTAL300_STATUS_DOOR_CLOSED; break;
   case DOOR_FAULT: state_msg = "fault"; break;
   }
-  mqtt_pub(PORTAL300_TOPIC_STATUS_DOOR(CURRENT_DOOR), state_msg);
+  if (!mqtt_pub(PORTAL300_TOPIC_STATUS_DOOR(CURRENT_DOOR), state_msg)) {
+    abort();
+  }
+
+#ifdef DEBUG_BUILD
+  char buffer[] = "Closed: X, Locked: Y";
+  buffer[8]     = io_get_door_closed() ? '1' : '0';
+  buffer[19]    = io_get_door_locked() ? '1' : '0';
+  mqtt_pub("debug/sensor/door_button", buffer);
+#endif
 }
 
 static void initialize_door_sensors()
@@ -439,7 +462,9 @@ void app_main(void)
           if (current_time - last_button_press_time >= BUTTON_DEBOUNCE_TIME / portTICK_PERIOD_MS) {
             last_button_press_time = current_time;
 
-            mqtt_pub(PORTAL300_TOPIC_EVENT_BUTTON, DOOR_NAME(CURRENT_DOOR));
+            if (!mqtt_pub(PORTAL300_TOPIC_EVENT_BUTTON, DOOR_NAME(CURRENT_DOOR))) {
+              abort();
+            }
           }
         }
       }
@@ -495,9 +520,15 @@ void app_main(void)
 
 static void on_mqtt_connect(void)
 {
-  mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE);
-  mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE);
-  mqtt_subscribe(PORTAL300_TOPIC_ACTION_LOCK_DOOR);
+  if (!mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE)) {
+    abort();
+  }
+  if (!mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE)) {
+    abort();
+  }
+  if (!mqtt_subscribe(PORTAL300_TOPIC_ACTION_LOCK_DOOR)) {
+    abort();
+  }
 }
 
 static void on_mqtt_data_received(struct MqttEvent const * event)

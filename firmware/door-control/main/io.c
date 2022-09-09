@@ -17,6 +17,9 @@
 
 #define PIN_IN_BUTTON GPIO_NUM_35
 
+#define PIN_IN_DOOR_CLOSED GPIO_NUM_14
+#define PIN_IN_DOOR_LOCKED GPIO_NUM_15
+
 static const bool output_active_high = true;
 
 static const gpio_config_t output_config = {
@@ -28,7 +31,7 @@ static const gpio_config_t output_config = {
 };
 
 static const gpio_config_t input_config = {
-    .pin_bit_mask = (1ULL << PIN_IN_BUTTON),
+    .pin_bit_mask = (1ULL << PIN_IN_BUTTON) | (1ULL << PIN_IN_DOOR_CLOSED) | (1ULL << PIN_IN_DOOR_LOCKED),
     .mode         = GPIO_MODE_INPUT,
     .pull_up_en   = GPIO_PULLUP_DISABLE, // We use pins without internal pull up/down
     .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -83,4 +86,14 @@ void io_beep(uint32_t pattern)
 bool io_get_button(void)
 {
   return gpio_get_level(PIN_IN_BUTTON);
+}
+
+bool io_get_door_closed(void)
+{
+  return !gpio_get_level(PIN_IN_DOOR_CLOSED);
+}
+
+bool io_get_door_locked(void)
+{
+  return !gpio_get_level(PIN_IN_DOOR_LOCKED);
 }

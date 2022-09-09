@@ -25,4 +25,7 @@ void io_beep(uint32_t pattern); // beeps the bit pattern from LSB to MSB. each s
 
 bool io_get_button(void);
 
+bool io_get_door_closed(void);
+bool io_get_door_locked(void);
+
 #endif
