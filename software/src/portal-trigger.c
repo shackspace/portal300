@@ -142,6 +142,7 @@ int main(int argc, char ** argv)
       {
         size_t const len = strnlen(msg.data.info, sizeof msg.data.info);
         fprintf(stdout, "%.*s\n", (int)len, msg.data.info);
+        fflush(stdout);
         break;
       }
 

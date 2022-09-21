@@ -127,6 +127,9 @@ static void send_signal(struct StateMachine * sm, void * context, enum SM_Signal
 
 void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_context)
 {
+  enum DoorState const previous_b2_state = sm->door_b2;
+  enum DoorState const previous_c2_state = sm->door_c2;
+
   // incorporate all door change events *BEFORE* computing the current state
   // of shackspace!
   sm_change_door_state(sm, event);
@@ -150,7 +153,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
     return;
   }
 
-  if (event == EVENT_DOOR_B2_LOCKED && sm_state == STATE_WAIT_FOR_OPEN_VIA_B) {
+  if (previous_b2_state != DOOR_LOCKED && event == EVENT_DOOR_B2_LOCKED && sm_state == STATE_WAIT_FOR_OPEN_VIA_B) {
     // after a request to unlock via B2, door B2 was successfully unlocked, but never opened and
     // has auto-closed itself again.
     sm->state = STATE_WAIT_FOR_LOCKED;
@@ -159,7 +162,7 @@ void sm_apply_event(struct StateMachine * sm, enum SM_Event event, void * user_c
     return;
   }
 
-  if (event == EVENT_DOOR_C2_LOCKED && sm_state == STATE_WAIT_FOR_OPEN_VIA_C) {
+  if (previous_c2_state != DOOR_LOCKED && event == EVENT_DOOR_C2_LOCKED && sm_state == STATE_WAIT_FOR_OPEN_VIA_C) {
     // after a request to unlock via C2, door C2 was successfully unlocked, but never opened and
     // has auto-closed itself again.
     sm->state = STATE_WAIT_FOR_LOCKED;
