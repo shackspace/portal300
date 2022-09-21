@@ -14,7 +14,8 @@ portal-trigger [-h] -i <id> -f <name> -n <nick> <action>
 Opens or closes the shackspace portal.
 
 The following <action>s are available:
-  open       the portal will be unlocked.
+  open-front the portal will be unlocked via the front door.
+  open-back  the portal will be unlocked via the back door.
   close      the portal will be closed.
   shutdown   the shackspace will be shut down.
   status     the current status of this portal will be printed.

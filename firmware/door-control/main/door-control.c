@@ -5,7 +5,6 @@
 #include "io.h"
 #include "portal300.h"
 #include "state-machine.h"
-#include "mlx90393.h"
 
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
@@ -19,13 +18,7 @@
 /////////////////////////////////////////////////////////////////////
 // Configuration:
 
-// The door we are attached to
-#define CURRENT_DOOR                DOOR_B2
-#define CURRENT_DEVICE              DOOR_CONTROL_B2
-#define BUTTON_DEBOUNCE_TIME        1000 // ms, can be pretty high for less button mashing
-#define FORCED_STATUS_UPDATE_PERIOD 10   // number of loops, roughly every ten seconds
-
-#define DEBUG_BUILD
+#include "door_config.h"
 
 /////////////////////////////////////////////////////////////////////
 
@@ -44,8 +37,6 @@ static const char client_key[] =
 static const char ca_crt[] =
 #include "certs/ca.crt.h"
     ;
-
-static struct MLX90393 mlx;
 
 static void on_mqtt_connect(void);
 static void on_mqtt_data_received(struct MqttEvent const * event);
@@ -66,8 +57,7 @@ static const struct MqttConfig mqtt_config = {
 
 static TaskHandle_t timeout_task = NULL;
 
-static void statemachine_signal(struct StateMachine * sm,
-                                enum PortalSignal     signal);
+static void statemachine_signal(struct StateMachine * sm, enum PortalSignal signal);
 static void statemachine_setTimeout(struct StateMachine * sm, uint32_t ms);
 static void statemachine_setIo(struct StateMachine * sm, enum PortalIo io, bool active);
 static void io_changed_level(void);
@@ -78,18 +68,6 @@ static const EventBits_t  EVENT_SM_CLOSE_REQUEST       = (1 << 2);
 static const EventBits_t  EVENT_SM_SAFE_OPEN_REQUEST   = (1 << 3);
 static const EventBits_t  EVENT_SM_UNSAFE_OPEN_REQUEST = (1 << 4);
 static EventGroupHandle_t event_group                  = NULL;
-
-struct Vector3
-{
-  float x, y, z;
-};
-
-struct SensorClassification
-{
-  struct Vector3 location;
-  float          radius2;
-  enum DoorState door_state;
-};
 
 static char const * door_state_to_string(enum DoorState door_state)
 {
@@ -102,113 +80,13 @@ static char const * door_state_to_string(enum DoorState door_state)
   return "unknown";
 }
 
-// static float euclidean_distance2(struct Vector3 const * a, struct Vector3 const * b)
-// {
-//   float dx = a->x - b->x;
-//   float dy = a->y - b->y;
-//   float dz = a->z - b->z;
-
-//   return dx * dx + dy * dy + dz * dz;
-// }
-
-//! Acceptable standard derivation of the sensor data.
-//! If data has too much noise in it, we assume the magnetic field is
-//! not stable and we can reject it.
-//!
-//! Adjust this to increase/decrease sensitivity to movement
-//!
-//! Measurements:
-//! - In a static environment, the stddev is usually less than 2.
-//! - In a changing environment, the stddev is typically way larger than 10.
-static const float acceptable_stddev = 10.0;
-
-// static const struct SensorClassification well_known_vectors[] = {
-//     // generated data:
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = 6.171983, .y = -22.461975, .z = 6.576705}, .radius2 = 10.483105},
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = 0.505900, .y = -22.259615, .z = 8.296766}, .radius2 = 20.121052},
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -4.249563, .y = -23.069056, .z = 10.927447}, .radius2 = 29.852276},
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -9.713285, .y = -24.991476, .z = 12.445148}, .radius2 = 55.054486},
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -14.569928, .y = -27.015078, .z = 11.838068}, .radius2 = 98.320034},
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -19.325390, .y = -29.342220, .z = 7.568555}, .radius2 = 187.681367},
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = 0.000000}, .radius2 = 409.496213},
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = -10.016829}, .radius2 = 555.778533},
-//     (struct SensorClassification){.door_state = DOOR_OPEN, .location = {.x = -22.866692, .y = -37.841347, .z = -20.539557}, .radius2 = 733.463518},
-
-//     (struct SensorClassification){.door_state = DOOR_CLOSED, .location = {.x = 20.851877, .y = -13.566074, .z = 10.409240}, .radius2 = 65.790504},
-
-//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -17.264450, .y = -0.243910, .z = -37.188171}, .radius2 = 332.412282},
-//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -27.281277, .y = 3.499753, .z = -44.958797}, .radius2 = 525.025754},
-//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -35.578041, .y = 7.648136, .z = -53.215088}, .radius2 = 731.612207},
-//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -43.975986, .y = 10.582358, .z = -61.570679}, .radius2 = 1002.024397},
-//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -23.153131, .y = 2.164176, .z = -40.830650}, .radius2 = 424.629290},
-//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -32.502167, .y = 6.049490, .z = -49.329777}, .radius2 = 638.108918},
-//     (struct SensorClassification){.door_state = DOOR_LOCKED, .location = {.x = -40.394211, .y = 9.206306, .z = -57.586067}, .radius2 = 875.646447},
-// };
-
-#define NUM_SAMPLES 32
-
-static struct Vector3 sliding_window[NUM_SAMPLES];
-static size_t         sliding_window_index = 0;
-
-static void push_sensor_data(struct Vector3 const * vec)
+static enum DoorState classify_sensor_data(void)
 {
-  assert(vec != NULL);
-
-  sliding_window[sliding_window_index] = *vec;
-  sliding_window_index += 1;
-  if (sliding_window_index >= NUM_SAMPLES)
-    sliding_window_index = 0;
-}
-
-struct SensorStats
-{
-  struct Vector3 avg;
-  float          stddev;
-};
-
-static void compute_sensor_stats(struct SensorStats * stats)
-{
-  assert(stats != NULL);
-
-  struct Vector3 avg_vec = {0, 0, 0};
-
-  for (size_t i = 0; i < NUM_SAMPLES; i++) {
-    avg_vec.x += sliding_window[i].x;
-    avg_vec.y += sliding_window[i].y;
-    avg_vec.z += sliding_window[i].z;
-  }
-
-  avg_vec.x /= (float)NUM_SAMPLES;
-  avg_vec.y /= (float)NUM_SAMPLES;
-  avg_vec.z /= (float)NUM_SAMPLES;
-
-  float variance_sum = 0.0;
-  for (size_t i = 0; i < NUM_SAMPLES; i++) {
-    float dx = sliding_window[i].x - avg_vec.x;
-    float dy = sliding_window[i].y - avg_vec.y;
-    float dz = sliding_window[i].z - avg_vec.z;
-
-    variance_sum += dx * dx + dy * dy + dz * dz;
-  }
-
-  stats->avg    = avg_vec;
-  stats->stddev = sqrtf(variance_sum / (float)NUM_SAMPLES);
-}
-
-static enum DoorState classify_sensor_data(struct Vector3 const * vec)
-{
-  assert(vec != NULL);
-
-  // size_t len = sizeof(well_known_vectors) / sizeof(well_known_vectors[0]);
-
-  // float min_dist = INFINITY;
-
-  // enum DoorState classification = DOOR_OPEN; // this is the default assumption
-
   if (io_get_door_closed()) {
     // single locked: debug/sensor/magnetometer/raw -24.03	21.03	-57.48
     // double locked: debug/sensor/magnetometer/raw -54.07	30.04	-90.75
-    if (vec->x < -30 && vec->y > 20 && vec->z < -60) {
+    // if (vec->x < -30 && vec->y > 20 && vec->z < -60) {
+    if (io_get_door_locked()) {
       return DOOR_LOCKED;
     }
     else {
@@ -218,20 +96,6 @@ static enum DoorState classify_sensor_data(struct Vector3 const * vec)
   else {
     return DOOR_OPEN;
   }
-
-  // for (size_t i = 0; i < len; i++) {
-  //   struct SensorClassification class = well_known_vectors[i];
-  //   float dist2                       = euclidean_distance2(&class.location, vec);
-
-  //   // printf("%zu => %.2f\n", i, dist);
-
-  //   if (dist2 <= class.radius2 && dist2 < min_dist) {
-  //     min_dist       = dist2;
-  //     classification = class.door_state;
-  //   }
-  // }
-
-  // return classification;
 }
 
 #define SMOOTH_DOOR_STATE_SIZE 8
@@ -264,67 +128,22 @@ static enum DoorState get_door_state(bool * value_sane)
 {
   assert(value_sane != NULL);
 
-  struct Vector3 sensor_data;
-  if (mlx90393_readData(&mlx, &sensor_data.x, &sensor_data.y, &sensor_data.z)) {
-    char buffer[256];
+  char buffer[256];
+
+  // and classify the sliding average instead of the current reading,
+  // so we have a stable sensor output.
+  const enum DoorState fresh_state = classify_sensor_data();
+
+  push_door_state(fresh_state);
+
+  enum DoorState result_state = get_smoothed_door_state(value_sane);
 
 #ifdef DEBUG_BUILD
-    enum DoorState raw_state = classify_sensor_data(&sensor_data);
-
-    // Send sensor data data over MQTT
-    snprintf(buffer, sizeof buffer, "%4.2f\t%4.2f\t%4.2f\t%s", sensor_data.x, sensor_data.y, sensor_data.z, door_state_to_string(raw_state));
-    mqtt_pub("debug/sensor/magnetometer/raw", buffer);
-
+  snprintf(buffer, sizeof buffer, "ok: %d\tclosed: %d\tlocked: %d\tclassification: %s", *value_sane, io_get_door_closed(), io_get_door_locked(), door_state_to_string(result_state));
+  mqtt_pub("debug/sensor/doors", buffer);
 #endif
 
-    // Insert the current sample into the sliding window
-    push_sensor_data(&sensor_data);
-
-    struct SensorStats stats;
-    compute_sensor_stats(&stats);
-
-    // Only accept the value if the change in the magnetic field is low
-    bool noise_level_ok = (stats.stddev <= acceptable_stddev);
-
-    // and classify the sliding average instead of the current reading,
-    // so we have a stable sensor output.
-    enum DoorState fresh_state = classify_sensor_data(&stats.avg);
-    push_door_state(fresh_state);
-
-#ifdef DEBUG_BUILD
-    snprintf(buffer, sizeof buffer, "stddev: %4.2f\tclassification: %s\tok: %d\tsmoothed: %4.2f\t%4.2f\t%4.2f", stats.stddev, door_state_to_string(fresh_state), noise_level_ok, stats.avg.x, stats.avg.y, stats.avg.z);
-    mqtt_pub("debug/sensor/magnetometer/classification", buffer);
-#endif
-
-    bool           door_state_stable = false;
-    enum DoorState result_state      = get_smoothed_door_state(&door_state_stable);
-
-    // Final classification of "ok" is chosen by this logic:
-    // - The door state must be stable for at least a short amount of time
-    // - The noise level must be low (so we're locked into position) or the door is in open state, which means we can swing the door back and forth without going to fault state
-    *value_sane = door_state_stable && (noise_level_ok || (fresh_state == DOOR_OPEN));
-
-#ifdef DEBUG_BUILD
-    snprintf(buffer, sizeof buffer, "stable: %d\tnoise: %d\tok: %d\tclassification: %s", door_state_stable, noise_level_ok, *value_sane, door_state_to_string(result_state));
-    mqtt_pub("debug/sensor/magnetometer/final", buffer);
-#else
-    // Even for non-debug builds, we want to receive fault state sensor data
-    if (result_state == DOOR_FAULT && *value_sane) {
-      snprintf(buffer, sizeof buffer, "stddev: %4.2f\tclassification: %s\tok: %d\tsmoothed: %4.2f\t%4.2f\t%4.2f", stats.stddev, door_state_to_string(fresh_state), noise_level_ok, stats.avg.x, stats.avg.y, stats.avg.z);
-      mqtt_pub("debug/sensor/magnetometer/classification", buffer);
-
-      snprintf(buffer, sizeof buffer, "stable: %d\tnoise: %d\tok: %d\tclassification: %s", door_state_stable, noise_level_ok, *value_sane, door_state_to_string(result_state));
-      mqtt_pub("debug/sensor/magnetometer/final", buffer);
-    }
-#endif
-
-    return result_state;
-  }
-  else {
-    *value_sane = false;
-  }
-
-  return DOOR_FAULT;
+  return result_state;
 }
 
 static enum PortalError log_sm_error(enum PortalError err)
@@ -363,42 +182,9 @@ static void publish_door_status(enum DoorState state)
 #endif
 }
 
-static void initialize_door_sensors()
-{
-  if (!mlx90393_init(&mlx, MLX90393_DEFAULT_ADDR))
-    abort();
-
-  mlx90393_setGain(&mlx, MLX90393_GAIN_2_5X);
-  // You can check the gain too
-  printf("Gain set to: ");
-  switch (mlx90393_getGain(&mlx)) {
-  case MLX90393_GAIN_1X: printf("1 x\n"); break;
-  case MLX90393_GAIN_1_33X: printf("1.33 x\n"); break;
-  case MLX90393_GAIN_1_67X: printf("1.67 x\n"); break;
-  case MLX90393_GAIN_2X: printf("2 x\n"); break;
-  case MLX90393_GAIN_2_5X: printf("2.5 x\n"); break;
-  case MLX90393_GAIN_3X: printf("3 x\n"); break;
-  case MLX90393_GAIN_4X: printf("4 x\n"); break;
-  case MLX90393_GAIN_5X: printf("5 x\n"); break;
-  }
-
-  // Set resolution, per axis
-  mlx90393_setResolution(&mlx, MLX90393_X, MLX90393_RES_19);
-  mlx90393_setResolution(&mlx, MLX90393_Y, MLX90393_RES_19);
-  mlx90393_setResolution(&mlx, MLX90393_Z, MLX90393_RES_16);
-
-  // Set oversampling
-  mlx90393_setOversampling(&mlx, MLX90393_OSR_2);
-
-  // Set digital filtering
-  mlx90393_setFilter(&mlx, MLX90393_FILTER_6);
-}
-
 void app_main(void)
 {
   event_group = xEventGroupCreate();
-
-  initialize_door_sensors();
 
   io_init(io_changed_level);
 
