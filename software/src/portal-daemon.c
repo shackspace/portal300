@@ -646,6 +646,23 @@ int main(int argc, char ** argv)
                 break;
               }
 
+              case IPC_MSG_FORCE_OPEN:
+              {
+                mqtt_client_publish(mqtt_client, PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE, DOOR_NAME(DOOR_B), 2);
+                mqtt_client_publish(mqtt_client, PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE, DOOR_NAME(DOOR_B2), 2);
+                mqtt_client_publish(mqtt_client, PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE, DOOR_NAME(DOOR_C), 2);
+                mqtt_client_publish(mqtt_client, PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE, DOOR_NAME(DOOR_C2), 2);
+                remove_ipc_client(pfd_index);
+                break;
+              }
+
+              case IPC_MSG_SYSTEM_RESET:
+              {
+                ipc_client_data->forward_logs = true;
+                log_print(LSS_IPC, LL_MESSAGE, "Starting system reset!");
+                mqtt_client_publish(mqtt_client, PORTAL300_TOPIC_ACTION_RESET, "*", 2);
+              }
+
               case IPC_MSG_SHUTDOWN:
               {
                 ipc_client_data->forward_logs = true;
@@ -956,6 +973,10 @@ static void mqtt_handle_message(void * user_data, char const * topic, char const
   else if (strstr(topic, PORTAL300_TOPIC_PREFIX) == topic) {
     // we only need to manage topics for portal300
     log_print(LSS_SYSTEM, LL_WARNING, "Received data for unhandled topic '%s': %s", topic, data);
+  }
+  else if (strstr(topic, PORTAL300_TOPIC_ACTION_RESET) == topic) {
+    log_print(LSS_SYSTEM, LL_WARNING, "Received global system reset. Shutting down!");
+    exit(1);
   }
 }
 

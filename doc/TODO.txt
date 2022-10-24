@@ -1,10 +1,13 @@
 
+- Debug-Commands implementieren
+
 - Statemachine der Firmware auf neues Modell umschreiben
 - Zweite Hardware fertig stellen
-  - Magnetsensor an der Türe anbringen
+  - Korrekten Magnetsensor anbringen
   - Verkabelung organisieren
 - System-Reset via MQTT implementieren
 - Debug-Interface implementieren
 - Vorstands-Scripte fertigstellen
 - Portal-Box clean aufsetzen
 - Neue CA erzeugen und neue Keys deployen
+

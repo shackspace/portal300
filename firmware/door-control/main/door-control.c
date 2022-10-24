@@ -315,6 +315,9 @@ static void on_mqtt_connect(void)
   if (!mqtt_subscribe(PORTAL300_TOPIC_ACTION_LOCK_DOOR)) {
     abort();
   }
+  if (!mqtt_subscribe(PORTAL300_TOPIC_ACTION_RESET)) {
+    abort();
+  }
 }
 
 static void on_mqtt_data_received(struct MqttEvent const * event)
@@ -335,6 +338,11 @@ static void on_mqtt_data_received(struct MqttEvent const * event)
     if (mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
       ESP_LOGI(TAG, "Received close command");
       xEventGroupSetBits(event_group, EVENT_SM_CLOSE_REQUEST);
+    }
+  }
+  else if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_RESET)) {
+    if (mqtt_event_has_data(event, "*") || mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
+      esp_restart();
     }
   }
   else {

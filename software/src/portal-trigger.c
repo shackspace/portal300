@@ -23,6 +23,8 @@ enum PortalAction
   PA_SHUTDOWN      = 4,
   PA_STATUS        = 5,
   PA_SIMPLE_STATUS = 6,
+  PA_SYSTEM_RESET  = 7,
+  PA_FORCE_OPEN    = 8,
 };
 
 struct PortalArgs
@@ -119,6 +121,26 @@ int main(int argc, char ** argv)
   {
     bool const ok = ipc_send_msg(ipc_socket, (struct IpcMessage){
                                                  .type = IPC_MSG_SIMPLE_STATUS,
+                                             });
+    if (!ok) {
+      return EXIT_FAILURE;
+    }
+    break;
+  }
+  case PA_FORCE_OPEN:
+  {
+    bool const ok = ipc_send_msg(ipc_socket, (struct IpcMessage){
+                                                 .type = IPC_MSG_FORCE_OPEN,
+                                             });
+    if (!ok) {
+      return EXIT_FAILURE;
+    }
+    break;
+  }
+  case PA_SYSTEM_RESET:
+  {
+    bool const ok = ipc_send_msg(ipc_socket, (struct IpcMessage){
+                                                 .type = IPC_MSG_SYSTEM_RESET,
                                              });
     if (!ok) {
       return EXIT_FAILURE;
@@ -231,6 +253,12 @@ static bool parse_action(char const * action_str, enum PortalAction * action)
   }
   else if (strcmp(action_str, "simple-status") == 0) {
     *action = PA_SIMPLE_STATUS;
+  }
+  else if (strcmp(action_str, "system-reset") == 0) {
+    *action = PA_SYSTEM_RESET;
+  }
+  else if (strcmp(action_str, "force-open") == 0) {
+    *action = PA_FORCE_OPEN;
   }
   else {
     return false;

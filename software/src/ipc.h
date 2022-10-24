@@ -18,6 +18,8 @@ enum IcpMessageType
   IPC_MSG_SHUTDOWN      = 104,
   IPC_MSG_QUERY_STATUS  = 105,
   IPC_MSG_SIMPLE_STATUS = 106,
+  IPC_MSG_SYSTEM_RESET  = 107,
+  IPC_MSG_FORCE_OPEN    = 108,
 
   // daemon to client
   IPC_MSG_INFO = 201,

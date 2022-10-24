@@ -79,8 +79,12 @@ void app_main(void)
 
 static void on_mqtt_connect(void)
 {
-  mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE);
-  mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE);
+  if (!mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE))
+    abort();
+  if (!mqtt_subscribe(PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE))
+    abort();
+  if (!mqtt_subscribe(PORTAL300_TOPIC_ACTION_RESET))
+    abort();
 }
 
 static void on_mqtt_data_received(struct MqttEvent const * event)
@@ -88,6 +92,11 @@ static void on_mqtt_data_received(struct MqttEvent const * event)
   if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE) || mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE)) {
     if (mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
       signal_door_open();
+    }
+  }
+  else if (mqtt_event_has_topic(event, PORTAL300_TOPIC_ACTION_RESET)) {
+    if (mqtt_event_has_data(event, "*") || mqtt_event_has_data(event, DOOR_NAME(CURRENT_DOOR))) {
+      esp_restart();
     }
   }
   else {

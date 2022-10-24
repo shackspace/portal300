@@ -26,6 +26,7 @@
 #define PORTAL300_TOPIC_ACTION_OPEN_DOOR_SAFE   PORTAL300_TOPIC_PREFIX "action/door/open-safe"   // payload: door name that should be opened
 #define PORTAL300_TOPIC_ACTION_OPEN_DOOR_UNSAFE PORTAL300_TOPIC_PREFIX "action/door/open-unsafe" // payload: door name that should be opened
 #define PORTAL300_TOPIC_ACTION_LOCK_DOOR        PORTAL300_TOPIC_PREFIX "action/door/lock"        // payload: door name that should be closed
+#define PORTAL300_TOPIC_ACTION_RESET            PORTAL300_TOPIC_PREFIX "action/reset"            // component that should be reset or "*" for everything
 
 ////////////////////////////////////////////////////////////////////////////////
 // system status:
