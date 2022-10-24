@@ -18,6 +18,10 @@
 #include "esp_log.h"
 #include "hal/gpio_types.h"
 #include "nvs_flash.h"
+#include "esp_sntp.h"
+
+#include <time.h>
+#include <sys/time.h>
 
 #include "esp_http_client.h"
 #include "driver/gpio.h"
@@ -45,8 +49,21 @@ static const char * const HTTP_TAG   = "http client";
 static void wifi_init_sta(void);
 static void http_native_request(void);
 
+static void time_synchronized(struct timeval * tv);
+
 extern const uint8_t root_cert_pem_start[] asm("_binary_letsencrypt_root_pem_start");
 extern const uint8_t root_cert_pem_end[] asm("_binary_letsencrypt_root_pem_end");
+
+static volatile bool last_time_sync = false;
+
+// void sntp_sync_time(struct timeval * tv)
+// {
+//   if (settimeofday(tv, NULL) == -1)
+//     perror("lol wtf");
+//   ESP_LOGI(SYSTEM_TAG, "Time is synchronized from custom code");
+//   sntp_set_sync_status(SNTP_SYNC_STATUS_COMPLETED);
+//   last_time_sync = true;
+// }
 
 void app_main(void)
 {
@@ -68,6 +85,36 @@ void app_main(void)
 
   ESP_LOGI(SYSTEM_TAG, "Connected to AP, begin providing shack information");
 
+  {
+    // printf("TZ=%s\n", getenv("TZ") || "null");
+    setenv("TZ", "CET-1MET", 1);
+    tzset();
+  }
+
+  {
+    sntp_set_time_sync_notification_cb(time_synchronized);
+    sntp_servermode_dhcp(1);
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_init();
+
+    struct timeval tv;
+    sntp_sync_time(&tv);
+  }
+
+  {
+    time_t    now;
+    char      strftime_buf[64];
+    struct tm timeinfo;
+
+    time(&now);
+
+    localtime_r(&now, &timeinfo);
+    strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+    ESP_LOGI(SYSTEM_TAG, "Time after boot is: %s", strftime_buf);
+  }
+
   bool is_open = false;
 
   uint32_t next_update_msg = 0;
@@ -77,6 +124,20 @@ void app_main(void)
 
     // tick with 50ms period time and check stdin. process messages from there.
     xTaskDelayUntil(&next_wakeup, pdMS_TO_TICKS(50));
+
+    if (last_time_sync) {
+      last_time_sync = false;
+
+      time_t    now;
+      char      strftime_buf[128];
+      struct tm timeinfo;
+
+      time(&now);
+      localtime_r(&now, &timeinfo);
+
+      strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+      ESP_LOGI("SNTP", "Time was synchronized to %s", strftime_buf);
+    }
 
     uint8_t byte;
     while (fread(&byte, 1, 1, stdin) == 1) {
@@ -101,6 +162,16 @@ void app_main(void)
       }
     }
   }
+}
+
+static void time_synchronized(struct timeval * tv)
+{
+  (void)tv;
+  // printf("secs=%ld\n", tv->tv_sec);
+
+  settimeofday(tv, NULL);
+
+  last_time_sync = true;
 }
 
 static void event_handler(void * arg, esp_event_base_t event_base, int32_t event_id, void * event_data)
