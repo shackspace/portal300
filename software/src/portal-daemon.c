@@ -253,6 +253,7 @@ int main(int argc, char ** argv)
     if (bind(ipc_sock, (struct sockaddr const *)&ipc_socket_address, sizeof ipc_socket_address) == -1) {
       log_perror(LSS_IPC, LL_ERROR, "failed to bind ipc socket");
       log_print(LSS_IPC, LL_ERROR, "is another instance of this daemon already running?");
+      log_print(LSS_IPC, LL_ERROR, "If not, delete %s", ipc_socket_address.sun_path);
       return EXIT_FAILURE;
     }
     atexit(close_ipc_sock);

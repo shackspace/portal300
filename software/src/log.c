@@ -108,9 +108,9 @@ void log_perror(enum LogSubSystem subsystem, enum LogLevel level, char const * m
     errmsg = "unknown error";
   }
 
-  strncpy(log_buffer, msg, sizeof log_buffer);
-  strncpy(log_buffer, ": ", sizeof log_buffer);
-  strncpy(log_buffer, errmsg, sizeof log_buffer);
+  strncpy(log_buffer, msg, sizeof(log_buffer) - 1);
+  strncat(log_buffer, ": ", sizeof(log_buffer) - 1);
+  strncat(log_buffer, errmsg, sizeof(log_buffer) - 1);
 
   log_write(subsystem, level, log_buffer);
 }
