@@ -47,7 +47,7 @@ static const char * const WIFI_TAG   = "wifi station";
 static const char * const HTTP_TAG   = "http client";
 
 static void wifi_init_sta(void);
-static void http_native_request(void);
+static void http_native_request(esp_http_client_handle_t);
 
 static void time_synchronized(struct timeval * tv);
 
@@ -64,6 +64,11 @@ static volatile bool last_time_sync = false;
 //   sntp_set_sync_status(SNTP_SYNC_STATUS_COMPLETED);
 //   last_time_sync = true;
 // }
+
+esp_http_client_config_t config = {
+    .url                 = PORTAL_API_ENDPOINT,
+    .use_global_ca_store = true,
+};
 
 void app_main(void)
 {
@@ -115,6 +120,13 @@ void app_main(void)
     ESP_LOGI(SYSTEM_TAG, "Time after boot is: %s", strftime_buf);
   }
 
+  esp_http_client_handle_t http_client = esp_http_client_init(&config);
+  if (http_client == NULL) {
+    ESP_LOGE(SYSTEM_TAG, "Failed to initialize HTTP client!");
+    abort();
+  }
+  ESP_ERROR_CHECK(esp_http_client_set_method(http_client, HTTP_METHOD_GET));
+
   bool is_open = false;
 
   uint32_t next_update_msg = 0;
@@ -139,23 +151,48 @@ void app_main(void)
       ESP_LOGI("SNTP", "Time was synchronized to %s", strftime_buf);
     }
 
+    bool force_send_notification = false;
+
     uint8_t byte;
     while (fread(&byte, 1, 1, stdin) == 1) {
       switch (byte) {
-      case PORTAL_SIGNAL_OPEN: is_open = true; break;
-      case PORTAL_SIGNAL_CLOSED: is_open = false; break;
+      case PORTAL_SIGNAL_OPEN:
+        if (is_open != true) {
+          ESP_LOGI("Status", "Portal status is now: open");
+          force_send_notification = true;
+        }
+        is_open = true;
+        break;
+      case PORTAL_SIGNAL_CLOSED:
+        if (is_open != false) {
+          ESP_LOGI("Status", "Portal status is now: closed");
+          force_send_notification = true;
+        }
+        is_open = false;
+        break;
       default:
         printf("received unhandled %02X\n", byte);
         break;
       }
     }
 
-    if (xTaskGetTickCount() >= next_update_msg) {
+    if (force_send_notification || (xTaskGetTickCount() >= next_update_msg)) {
 
-      next_update_msg += pdMS_TO_TICKS(PORTAL_API_UPDATE_PERIOD * 1000);
+#define UPDATE_PERIOD pdMS_TO_TICKS(PORTAL_API_UPDATE_PERIOD * 1000)
+
+      if (force_send_notification) {
+        // if we have a forced update, don't forward
+        next_update_msg = xTaskGetTickCount() + UPDATE_PERIOD;
+      }
+      else {
+        next_update_msg += UPDATE_PERIOD;
+      }
+
+#undef UPDATE_PERIOD
+
       if (is_open) {
         ESP_LOGI(SYSTEM_TAG, "Periodic updater tick: Sending 'open' ping");
-        http_native_request();
+        http_native_request(http_client);
       }
       else {
         ESP_LOGI(SYSTEM_TAG, "Periodic updater tick: Shack not open, not sending ping.");
@@ -257,17 +294,8 @@ static void wifi_init_sta(void)
   }
 }
 
-static void http_native_request(void)
+static void http_native_request(esp_http_client_handle_t client)
 {
-  esp_http_client_config_t config = {
-      .url                 = PORTAL_API_ENDPOINT,
-      .use_global_ca_store = true,
-  };
-
-  esp_http_client_handle_t client = esp_http_client_init(&config);
-
-  // GET Request
-  ESP_ERROR_CHECK(esp_http_client_set_method(client, HTTP_METHOD_GET));
   ESP_ERROR_CHECK(esp_http_client_open(client, 0));
 
   int content_length = esp_http_client_fetch_headers(client);
@@ -287,6 +315,4 @@ static void http_native_request(void)
   }
 
   ESP_ERROR_CHECK(esp_http_client_close(client));
-
-  ESP_ERROR_CHECK(esp_http_client_cleanup(client));
 }

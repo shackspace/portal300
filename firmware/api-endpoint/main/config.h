@@ -9,7 +9,7 @@
 #define SHACK_MAXIMUM_RECONNECT_RETRY 5
 
 // API Configuration:
-#define PORTAL_API_UPDATE_PERIOD (2 * 60) // seconds
+#define PORTAL_API_UPDATE_PERIOD (1 * 60) // seconds
 #define PORTAL_API_ENDPOINT      "https://api.shackspace.de/v1/space/notify-open?auth_token=" PORTAL_API_TOKEN
 
 // byte message definitions:
