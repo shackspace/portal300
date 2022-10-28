@@ -67,7 +67,7 @@ use_identity_as_username false # we dont use the full certificate identity as us
 systemctl enable mosquitto
 
 # setup portal users:
-for user in open-front open-back close; do
+for user in open-front open-back close status; do
   useradd -m "${user}"
   mkdir "/home/${user}/.ssh"
   chown "${user}:${user}" "/home/${user}/.ssh"
@@ -76,7 +76,7 @@ for user in open-front open-back close; do
 done
 
 # disable access for any "rogue" users:
-echo 'AllowUsers open-front open-back close root' >> /etc/ssh/sshd_config
+echo 'AllowUsers open-front open-back close status root' >> /etc/ssh/sshd_config
 
 # Put all IPC users into the same group
 groupadd portal-ipc
@@ -84,6 +84,13 @@ gpasswd -a portal-daemon portal-ipc
 gpasswd -a open-front portal-ipc
 gpasswd -a open-back portal-ipc
 gpasswd -a close portal-ipc
+
+echo "alias portal-status='/opt/portal300/portal-trigger status'" >> /root/.bashrc
+
+# improve log rotation
+echo '[Journal]
+MaxFileSec=1month
+' > /etc/systemd/journald.conf
 
 # command="",no-port-forwarding,no-X11-forwarding,no-agent-forwarding ${key}
 #
