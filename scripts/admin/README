@@ -1,11 +1,31 @@
 This folder contains Portal300 administrative setup.
 
-The file structure should look like this:
-scripts/admin/
-├── README        # this file
-├── ca
-│   └── ...
-├── data
-│   └── ...       # auxiliary data required by the scripts
-├── initialize.sh # initializes the certificate authority 
-└── key-export.sh # exports keys from byro into a target folder
+Usage:
+
+  To export the keys to the portal machine, first create a temporary folder,
+  then run ./key-export <that-folder>. After that, copy the files from that
+  folder to an USB stick formatted with FAT32, and plug that USB stick into
+  the APU machine. The new keys should then be deployed.
+
+First run:
+
+  Run ./initialize.sh to create a new certificate authority. This CA is then
+  used to sign future key exports.
+  
+WARNING:
+
+  If a new CA is created, the firmware of the ESP32s have to be recompiled,
+  and the CA has to be updated on the APU machine. Do this only if absolutely
+  necessary!
+
+File System:
+
+  scripts/admin/
+  ├── README        # this file
+  ├── ca
+  │   └── ...
+  ├── data
+  │   └── ...       # auxiliary data required by the scripts
+  ├── initialize.sh # initializes the certificate authority 
+  └── key-export.sh # exports keys from byro into a target folder
+

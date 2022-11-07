@@ -5,15 +5,30 @@ ROOT="$(dirname $(realpath $0))"
 set -e
 source "${ROOT}/data/common-inc.sh"
 
-TARGET="$1"
+# sanitize files
+if [ ! -f "${ROOT}/data/key-export.sql" ]; then 
+  echo "data/key-export.sql missing!"
+  exit 1
+fi
 
+if [ ! -f "${KEY_FILE}" ]; then
+  echo "${KEY_FILE} not found. Is the CA initialized?"
+  exit 1
+fi
+
+if [ ! -f "${CRT_FILE}" ]; then
+  echo "${CRT_FILE} not found. Is the CA initialized?"
+  exit 1
+fi
+
+# sanitize arguments
+TARGET="$1"
 if [ -z "${TARGET}" ]; then
   echo "usage: $0 <target-folder>"
   exit 1
 fi
 
 LISTFILE="${TARGET}/keymembers.json"
-SIGFILE="${TARGET}/keymembers.json.sig"
 
 echo "Fetching keys from byro..."
 psql \
@@ -27,6 +42,6 @@ psql \
 > "${LISTFILE}"
 
 echo "Signing keys..."
-openssl dgst -sha256 -sign "${KEY_FILE}" -out "${SIGFILE}.sig" "${LISTFILE}"
+openssl dgst -sha256 -sign "${KEY_FILE}" -out "${LISTFILE}.sig" "${LISTFILE}"
 
-echo "Finished."
+echo "Key export done. Copy the files in ${TARGET} to an USB stick, and plug it into the portal machine."
